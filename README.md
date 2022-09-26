@@ -35,6 +35,12 @@ allow api calls using a file transfer pipe
     * 500mb was the sweet spot for the mirroring service
   * files < 1mb create overhead, and < 10kb create fairly significant overhead (by proportion)
   * corruption is rare, truncation is the most common issue by far
+* uuid or sequential id?
+  * uuid - more state, but easier to implement
+  * sequential - less state stored (single int64), more bandwidth efficient, lower latency 
+* custom file format?
+  * probably start with json, stuffed into a jwt, and nested into a jwe (sign-then-encrypt)
+  * make sure the sender and recipient are in the signed portion (as well as the filename)?
 
 ## how
 
@@ -56,6 +62,32 @@ allow api calls using a file transfer pipe
 |                                                               |                                                                 | receive ack or resend after timeout                                                            |                 |
 |                                                               | call caller's callback                                          |                                                                                                |                 |
 | receive callback with response status code, body, and headers |                                                                 |                                                                                                |                 |
+
+## stored state (server 1/2)
+
+* un-acked messages (including un-acked acks perhaps)
+* received message ids (for deduplication)
+* shared secrets or public/private keys (to sign/verify and encrypt/decrypt)
+* cached responses (for polling based system)
+
+## token state
+
+* sender / recipient server id (to de-conflict shared folder usage)
+* uuid, decompressed size, decompressed checksum/hash (for ack)
+* content type - json, messagepack, etc
+* version - v1
+* timestamp
+* data (request)
+  * complete http request details, including files
+  * caller's callback url
+  * caller's ip? (for `x-forwarded-for`)
+* data (response)
+  * complete response details, including files
+  * caller's callback url
+  * callee's ip or other details?
+  * round trip time?
+* metadata?
+  * acks for last received uuids / sequence ids
 
 ## possible libraries to look into
 
