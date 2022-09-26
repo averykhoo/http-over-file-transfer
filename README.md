@@ -72,7 +72,7 @@ allow api calls using a file transfer pipe
 
 ## token state
 
-* sender / recipient server id (to de-conflict shared folder usage)
+* sender / recipient server id (to de-conflict shared folder usage and prevent "surreptitious forwarding")
 * uuid, decompressed size, decompressed checksum/hash (for ack)
 * content type - json, messagepack, etc
 * version - v1
