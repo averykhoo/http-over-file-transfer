@@ -38,7 +38,7 @@ allow api calls using a file transfer pipe
   * corruption is rare, truncation is the most common issue by far
 * uuid or sequential id?
   * uuid - more state, but easier to implement
-  * sequential - less state stored (single int64), more bandwidth efficient, lower latency 
+  * sequential - less state stored (single int64), more bandwidth efficient, lower latency
 * custom file format?
   * probably start with json, stuffed into a jwt, and nested into a jwe (sign-then-encrypt)
   * make sure the sender and recipient are in the signed portion (as well as the filename)?
@@ -111,6 +111,7 @@ allow api calls using a file transfer pipe
   * can remove acked messages from outbox
   * can remove from sent when other lamport clock exceeds it
   * can remove double-acked from inbox
+  * (extension) use "processing start timestamp" flag to multithread processing of received messages with timeout
   * (extension) use "processed" flag or clock to determine which messages can be removed
 
 ### layer 0
@@ -127,34 +128,23 @@ allow api calls using a file transfer pipe
 
 * jwe
   * jwt
-    * metadata
+    * metadata (also helps prevent "surreptitious forwarding")
       * sender uuid - expected to match filename?
       * recipient uuid
       * timestamp
+      * protocol version
     * ordered list of messages (possibly empty)
       * data
         * message id - lamport clock tick
-        * content type? utf8, latin1, ascii, base64-binary
-        * data
+        * content type? (escaped unicode auto handled by json decoder) plaintext / base64-binary / json / compressed?
+        * ascii/base64 data
     * control (optional?)
       * sender's last sent data message sequential id
       * last contiguous received message id
       * out of order (non-contiguous) received message ids and associated nonces
 
-## stored state (server 1/2)
+### layer 2
 
-* un-acked messages (including un-acked acks perhaps)
-* received message ids (for deduplication)
-* shared secrets or public/private keys (to sign/verify and encrypt/decrypt)
-* cached responses (for polling based system)
-
-## token state
-
-* sender / recipient server id (to de-conflict shared folder usage and prevent "surreptitious forwarding")
-* uuid/autoincrement, decompressed size, decompressed checksum/hash (for ack)
-* version -> v1
-* timestamp
-* data-format -> json, uncompressed
 * data (request) (can be compressed?)
   * complete http request details, including files
   * caller's callback url
@@ -164,8 +154,6 @@ allow api calls using a file transfer pipe
   * caller's callback url
   * callee's ip or other details?
   * round trip time?
-* metadata?
-  * acks for last received uuids / sequence ids
 
 ## possible libraries to look into
 
@@ -174,4 +162,13 @@ allow api calls using a file transfer pipe
   * [python-jose](https://pypi.org/project/python-jose/)
 * reference for http proxy
   * [pproxy](https://pypi.org/project/pproxy/)
-* 
+* alternative: use a custom binary format, handle signing and encryption manually
+  * maybe use a known format?
+    * protobuf
+    * messagepack
+    * cbor
+  * message format a bit like jwe / jwt / jws (jose)
+    * header
+    * data (signed and encrypted with random key and iv)
+    * encrypted random key, iv
+    * hmac with random key
