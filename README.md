@@ -93,34 +93,53 @@ allow api calls using a file transfer pipe
 ### server state
 
 * per other server
-  * lamport clock
+  * public key or shared secret
+  * retransmission timeout
+    * plus additional delay for seconds per megabyte or something?
+  * own lamport clock
     * own last sent
     * last contiguous received
     * out of order received
+  * other lamport clock
+    * received
+    * sent
   * outbox
-    * data to send, id, acked
-  * sent
-    * nonce, timestamp, message ids (or none), acked
+    * data to send, id, sent timestamp, acked timestamp
   * inbox
-    * data received, id, sent timestamp, received timestamp, ack ack
+    * data received, id, sent timestamp, received timestamp, ack ack timestamp
+* maybe a housekeeping script?
+  * can remove acked messages from outbox
+  * can remove from sent when other lamport clock exceeds it
+  * can remove double-acked from inbox
+  * (extension) use "processed" flag or clock to determine which messages can be removed
+
+### layer 0
+
+* some folder
+  * recipient
+    * {sender}--{recipient}--{id}.json
+* write as a hidden file with a . prefix then rename/move once done
+* read only when sure the file is fully written - either keep state of timestamp and file size bytes or use mtime/ctime
+  * needs a timeout after last byte is written before we read the file?
+    * or just yolo for reading, ignore/skip errors, and use this timeout only to delete invalid files?
 
 ### layer 1
 
 * jwe
   * jwt
-    * random nonce
     * metadata
-      * sender uuid
+      * sender uuid - expected to match filename?
       * recipient uuid
       * timestamp
     * ordered list of messages (possibly empty)
       * data
         * message id - lamport clock tick
+        * content type? utf8, latin1, ascii, base64-binary
         * data
-      * control
-        * sender's last sent message sequential id
-        * last contiguous received message id
-        * out of order (non-contiguous) received message ids and associated nonces
+    * control (optional?)
+      * sender's last sent data message sequential id
+      * last contiguous received message id
+      * out of order (non-contiguous) received message ids and associated nonces
 
 ## stored state (server 1/2)
 
