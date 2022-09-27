@@ -18,6 +18,7 @@ allow api calls using a file transfer pipe
 * encryption optional?
   * encrypted - protects http body, like tls should, but needs shared secrets
   * plaintext - allows virus scans to do their job
+* symmetric or public key
 * auditing?
   * nah
 * dedupe?
@@ -41,8 +42,12 @@ allow api calls using a file transfer pipe
 * custom file format?
   * probably start with json, stuffed into a jwt, and nested into a jwe (sign-then-encrypt)
   * make sure the sender and recipient are in the signed portion (as well as the filename)?
+* subfolders?
+  * server-2-uuid/server-2--server-1--sequence-id.json.jwt.jwe
+* retry partial message success?
+* maximum messages simultaneously in transit?
 
-## how
+## ~~how (v1)~~
 
 | caller                                                        | server 1                                                        | server 2                                                                                       | callee          |
 |---------------------------------------------------------------|-----------------------------------------------------------------|------------------------------------------------------------------------------------------------|-----------------|
@@ -63,6 +68,60 @@ allow api calls using a file transfer pipe
 |                                                               | call caller's callback                                          |                                                                                                |                 |
 | receive callback with response status code, body, and headers |                                                                 |                                                                                                |                 |
 
+## how (v2 - reinventing the ~~wheel~~ osi model)
+
+* layer 0 - unreliable file transfer
+  * some folder that sometimes pushes files into the other folder
+  * assume the folder is shared among multiple tenants
+  * only ways to organize data are by subfolder and filename
+* layer 1 - reliable secure message log replication
+  * bounded message size, maybe up to 100mb
+  * signed and encrypted
+  * no partial message retries?
+  * maybe send it in a framed format so we can concat multiple short messages using a greedy algorithm
+  * base the replication algo on a lamport clock since it's easier to reason about
+* layer 2 - http proxy
+  * allows http requests to be split into multiple messages if they're too large
+  * compression happens here
+  * requires callback url
+* optional frontend layer - ttl cache
+  * allow user to poll and pull instead
+* optional backend layer - oauth cache
+  * cookies or client id/credentials
+  * store and refresh tokens
+
+### server state
+
+* per other server
+  * lamport clock
+    * own last sent
+    * last contiguous received
+    * out of order received
+  * outbox
+    * data to send, id, acked
+  * sent
+    * nonce, timestamp, message ids (or none), acked
+  * inbox
+    * data received, id, sent timestamp, received timestamp, ack ack
+
+### layer 1
+
+* jwe
+  * jwt
+    * random nonce
+    * metadata
+      * sender uuid
+      * recipient uuid
+      * timestamp
+    * ordered list of messages (possibly empty)
+      * data
+        * message id - lamport clock tick
+        * data
+      * control
+        * sender's last sent message sequential id
+        * last contiguous received message id
+        * out of order (non-contiguous) received message ids and associated nonces
+
 ## stored state (server 1/2)
 
 * un-acked messages (including un-acked acks perhaps)
@@ -73,15 +132,15 @@ allow api calls using a file transfer pipe
 ## token state
 
 * sender / recipient server id (to de-conflict shared folder usage and prevent "surreptitious forwarding")
-* uuid, decompressed size, decompressed checksum/hash (for ack)
-* content type - json, messagepack, etc
-* version - v1
+* uuid/autoincrement, decompressed size, decompressed checksum/hash (for ack)
+* version -> v1
 * timestamp
-* data (request)
+* data-format -> json, uncompressed
+* data (request) (can be compressed?)
   * complete http request details, including files
   * caller's callback url
   * caller's ip? (for `x-forwarded-for`)
-* data (response)
+* data (response) (can be compressed?)
   * complete response details, including files
   * caller's callback url
   * callee's ip or other details?
