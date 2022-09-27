@@ -4,69 +4,55 @@ allow api calls using a file transfer pipe
 
 ## decisions
 
-* should the caller be notified about the request status as it happens
+* [ ] should the caller be notified about the request status as it happens
   * eg. when server 2 acks
-* how to encode response body if it's not json (i.e. binary or non-utf8 text)
+* [ ] how to encode response body if it's not json (i.e. binary or non-utf8 text)
   * include content type and whether it's base64-encoded? or just store as latin1 and rely on escapes?
-* support for polling and pulling instead of callbacks
+* [ ] support for polling and pulling instead of callbacks
   * requires much more state tracking
   * can be a caching wrapper (with ttl) built over the callback system, but vice-versa is also true
   * could also be an event-based system that we build an http layer over
-* checksum or sign?
+* [x] checksum or sign?
   * checksum - no need for secrets
   * sign - safe against spoofed files dropped by 3rd parties
-* encryption optional?
+* [x] encryption optional?
   * encrypted - protects http body, like tls should, but needs shared secrets
   * plaintext - allows virus scans to do their job
-* symmetric or public key
-* auditing?
+* [ ] symmetric or public key
+* [x] auditing?
   * nah
-* dedupe?
+* [x] dedupe?
   * requires stored state on server 2
-* how to ack the ack?
+* [x] how to ack the ack?
   * or send with a sequence id and ack and increment last seen
   * or send the ack 3 times (in 3 separate files) and accept the overhead of resends
   * or use a crdt / vector clock / ratchet-like algo to count acks seen on both sides
-* heartbeat?
-* what if we want to run multiple instances in parallel over the same folders?
+* [ ] heartbeat?
+* [x] what if we want to run multiple instances in parallel over the same folders?
   * need to identify sender/recipient pairs
   * can also allow for any-to-any messaging, as long as it's whitelisted?
-* collation / fragmentation
+* [x] collation / fragmentation (handle on layer 2)
   * files > 1gb tend to be truncated
     * 500mb was the sweet spot for the mirroring service
   * files < 1mb create overhead, and < 10kb create fairly significant overhead (by proportion)
   * corruption is rare, truncation is the most common issue by far
-* uuid or sequential id?
-  * uuid - more state, but easier to implement
+* [x] uuid or sequential id?
+  * ~~uuid - more state, but easier to implement~~
   * sequential - less state stored (single int64), more bandwidth efficient, lower latency
-* custom file format?
+* [x] custom binary file format?
   * probably start with json, stuffed into a jwt, and nested into a jwe (sign-then-encrypt)
   * make sure the sender and recipient are in the signed portion (as well as the filename)?
-* subfolders?
+* [x] subfolders?
   * server-2-uuid/server-2--server-1--sequence-id.json.jwt.jwe
-* retry partial message success?
-* maximum messages simultaneously in transit?
-
-## ~~how (v1)~~
-
-| caller                                                        | server 1                                                        | server 2                                                                                       | callee          |
-|---------------------------------------------------------------|-----------------------------------------------------------------|------------------------------------------------------------------------------------------------|-----------------|
-| send http request (with callback url)                         |                                                                 |                                                                                                |                 |
-|                                                               | receive request                                                 |                                                                                                |                 |
-|                                                               | translate request to file (json, compress, uuid, sign, encrypt) |                                                                                                |                 |
-|                                                               | drop file into folder                                           |                                                                                                |                 |
-|                                                               |                                                                 | receive, decrypt, validate (or drop without nack), dedupe (or re-ack), decompress, ack or nack |                 |
-|                                                               | receive ack or resend after timeout or nack                     |                                                                                                |                 |
-|                                                               |                                                                 | forward http request                                                                           |                 |
-|                                                               |                                                                 |                                                                                                | receive request |
-|                                                               |                                                                 |                                                                                                | process         |
-|                                                               |                                                                 |                                                                                                | respond         |
-|                                                               |                                                                 | translate response to file                                                                     |                 |
-|                                                               |                                                                 | drop into folder                                                                               |                 |
-|                                                               | receive, ....                                                   |                                                                                                |                 |
-|                                                               |                                                                 | receive ack or resend after timeout                                                            |                 |
-|                                                               | call caller's callback                                          |                                                                                                |                 |
-| receive callback with response status code, body, and headers |                                                                 |                                                                                                |                 |
+* [ ] retry partial message success?
+* [ ] rate limiting
+  * maximum messages simultaneously in transit?
+  * maximum bandwidth?
+  * maximum calls from some callee / bytes per day or something
+* [ ] statistics?
+  * usage
+  * speed/throughput
+  * error percentages
 
 ## how (v2 - reinventing the ~~wheel~~ osi model)
 
@@ -137,7 +123,7 @@ allow api calls using a file transfer pipe
       * data
         * message id - lamport clock tick
         * content type? (escaped unicode auto handled by json decoder) plaintext / base64-binary / json / compressed?
-        * ascii/base64 data
+        * escaped/base64 data (reject anything above certain size)
     * control (optional?)
       * sender's last sent data message sequential id
       * last contiguous received message id
