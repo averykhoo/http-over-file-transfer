@@ -45,14 +45,22 @@ allow api calls using a file transfer pipe
 * [x] subfolders?
   * server-2-uuid/server-2--server-1--sequence-id.json.jwt.jwe
 * [ ] retry partial message success?
+  * this is not out of order acks (see also tcp sack)
+  * may be useful because the most common error is truncation
 * [ ] rate limiting
   * maximum messages simultaneously in transit?
   * maximum bandwidth?
   * maximum calls from some callee / bytes per day or something
 * [ ] statistics?
-  * usage
-  * speed/throughput
+  * usage / users / byte size histogram
+  * speed / throughput / latency
   * error percentages
+* [ ] transfer optimization by calculating bandwidth (based on throughput / latency)
+  * see also TCP Vegas, which attempts something similar, meaning it's not entirely unreasonable to attempt
+  * maybe also calculate error rate?
+  * priority queue?
+  * 
+
 
 ## how (v2 - reinventing the ~~wheel~~ osi model)
 
@@ -60,6 +68,7 @@ allow api calls using a file transfer pipe
   * some folder that sometimes pushes files into the other folder
   * assume the folder is shared among multiple tenants
   * only ways to organize data are by subfolder and filename
+  * optionally write multiple sub-files or add error correction
 * layer 1 - reliable secure message log replication
   * bounded message size, maybe up to 100mb
   * signed and encrypted
@@ -70,6 +79,7 @@ allow api calls using a file transfer pipe
   * allows http requests to be split into multiple messages if they're too large
   * compression happens here
   * requires callback url
+  * include full schema+creds+url+query+params, headers, timeout?, verb, cookie
 * optional frontend layer - ttl cache
   * allow user to poll and pull instead
 * optional backend layer - oauth cache
@@ -107,8 +117,10 @@ allow api calls using a file transfer pipe
     * {sender}--{recipient}--{id}.json
 * write as a hidden file with a . prefix then rename/move once done
 * read only when sure the file is fully written - either keep state of timestamp and file size bytes or use mtime/ctime
+  * handle weird / negative time differences between reading and writing?
   * needs a timeout after last byte is written before we read the file?
     * or just yolo for reading, ignore/skip errors, and use this timeout only to delete invalid files?
+* maybe add error correction? 
 
 ### layer 1
 
@@ -150,11 +162,14 @@ allow api calls using a file transfer pipe
   * [pproxy](https://pypi.org/project/pproxy/)
 * alternative: use a custom binary format, handle signing and encryption manually
   * maybe use a known format?
-    * protobuf
-    * messagepack
-    * cbor
+    * protobuf / flatbuffers
+    * cbor / messagepack
+    * avro / parquet / pickle / ion (amazon) / thrift / 
   * message format a bit like jwe / jwt / jws (jose)
     * header
     * data (signed and encrypted with random key and iv)
     * encrypted random key, iv
     * hmac with random key
+* error correction codes
+  * raptorq
+  * 
