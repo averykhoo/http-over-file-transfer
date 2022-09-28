@@ -174,5 +174,5 @@ allow api calls using a file transfer pipe
   * raptorq
   * par2cmdline
   * reed-solomon
-  * just append nulls since we only really get truncation errors
+  * just append nulls (after a 0xFF end flag) since we only really get truncation errors
 * binary encoding - maybe try base85? slower but more space efficient, and we're probably network limited
