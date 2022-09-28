@@ -19,8 +19,12 @@ allow api calls using a file transfer pipe
   * encrypted - protects http body, like tls should, but needs shared secrets
   * plaintext - allows virus scans to do their job
 * [ ] symmetric or public key
-* [x] auditing?
-  * nah
+* [ ] logging / auditing / metrics
+  * metrics / statistics
+    * usage / users / byte size histogram
+    * speed / throughput / latency
+    * error percentages
+  * ignore auditing for now
 * [x] dedupe?
   * requires stored state on server 2
 * [x] how to ack the ack?
@@ -51,10 +55,6 @@ allow api calls using a file transfer pipe
   * maximum messages simultaneously in transit?
   * maximum bandwidth?
   * maximum calls from some callee / bytes per day or something
-* [ ] statistics?
-  * usage / users / byte size histogram
-  * speed / throughput / latency
-  * error percentages
 * [ ] transfer optimization by calculating bandwidth (based on throughput / latency)
   * see also TCP Vegas, which attempts something similar, meaning it's not entirely unreasonable to attempt
   * maybe also calculate error rate?
@@ -172,4 +172,7 @@ allow api calls using a file transfer pipe
     * hmac with random key
 * error correction codes
   * raptorq
-  * 
+  * par2cmdline
+  * reed-solomon
+  * just append nulls since we only really get truncation errors
+* binary encoding - maybe try base85? slower but more space efficient, and we're probably network limited
