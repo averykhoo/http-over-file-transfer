@@ -72,6 +72,7 @@ allow api calls using a file transfer pipe
   * assume the folder is shared among multiple tenants
   * only ways to organize data are by subfolder and filename
   * optionally write multiple sub-files or add error correction
+  * compression should be handled here
 * layer 1 - reliable secure message log replication
   * bounded message size, maybe up to 100mb
   * signed and encrypted

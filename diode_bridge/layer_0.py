@@ -10,7 +10,7 @@ Layer 0: reliably write and read files on some network folder
   * needs a timeout after last byte is written before we read the file?
     * or just yolo for reading, ignore/skip errors, and use this timeout only to delete invalid files?
 * maybe add error correction?
-
+* add compression via zlib.compress
 """
 import datetime
 import hashlib
