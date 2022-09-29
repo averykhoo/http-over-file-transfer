@@ -23,6 +23,8 @@ from typing import Optional
 from typing import Union
 
 # header will contain a hash and the data length
+from diode_bridge.schemas.layer_0_header import Header
+
 HEADER_SIZE = 64
 HASH_ALGORITHM = hashlib.sha384
 HASH_DIGEST_LENGTH = len(HASH_ALGORITHM(b'\0').digest())
@@ -61,8 +63,7 @@ class BinaryWriter:
         # write header
         if not self._temp_file.closed:
             self._temp_file.seek(0)
-            self._temp_file.write(self._hash_object.digest())
-            self._temp_file.write(str(self._len).encode('ascii'))
+            self._temp_file.write(bytes(Header(self._hash_object.digest(), self._len)))
             self._temp_file.close()
             shutil.move(self._temp_file_path, self._path)
 
@@ -102,16 +103,20 @@ class BinaryReader:
         self._file.close()
 
     @property
+    def header(self):
+        return Header.from_bytes(self._header, HASH_DIGEST_LENGTH)
+
+    @property
     def _len(self):
         if len(self._header) < HEADER_SIZE:
             return None
-        return int(self._header[HASH_DIGEST_LENGTH:].rstrip(b'\0').decode('ascii'))
+        return self.header.data_size_bytes
 
     @property
     def _hexdigest(self):
         if len(self._header) < HEADER_SIZE:
             return None
-        return self._header[:HASH_DIGEST_LENGTH]
+        return self.header.hash_digest
 
     def is_complete(self):
         return (self._hexdigest, self._len) == (self._hash_object.digest(), len(self._data))
