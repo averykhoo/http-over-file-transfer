@@ -10,7 +10,7 @@ Layer 0: reliably write and read files on some network folder
   * needs a timeout after last byte is written before we read the file?
     * or just yolo for reading, ignore/skip errors, and use this timeout only to delete invalid files?
 * maybe add error correction?
-* add compression via zlib.compress
+* add compression via `zlib.compress`
 """
 import datetime
 import hashlib
@@ -25,11 +25,10 @@ from typing import Union
 # header will contain a hash and the data length
 from diode_bridge.schemas.layer_0_header import Header
 
-HEADER_SIZE = 64
 HASH_ALGORITHM = hashlib.sha384
 HASH_DIGEST_LENGTH = len(HASH_ALGORITHM(b'\0').digest())
 MAX_SIZE = 128 * 1024 * 1024  # 128 MiB == 134217728 bytes, 9 ascii characters
-assert HEADER_SIZE >= HASH_DIGEST_LENGTH + math.log10(MAX_SIZE)
+assert Header.header_size_bytes >= HASH_DIGEST_LENGTH + math.log10(MAX_SIZE)
 
 
 class BinaryWriter:
@@ -53,7 +52,7 @@ class BinaryWriter:
     def __enter__(self):
         if self._temp_file is None:
             self._temp_file = self._temp_file_path.open('xb')
-        self._temp_file.write(b'\0' * HEADER_SIZE)
+        self._temp_file.write(b'\0' * Header.header_size_bytes)
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -73,8 +72,8 @@ class BinaryWriter:
         if not self._temp_file.writable():
             raise IOError(f'file already written and cannot be edited: {self._path}')
         self._len += len(binary_data)
-        if self._len > MAX_SIZE - HEADER_SIZE:
-            raise IOError(f'attempted to write too many bytes, max is {MAX_SIZE - HEADER_SIZE}')
+        if self._len > MAX_SIZE - Header.header_size_bytes:
+            raise IOError(f'attempted to write too many bytes, max is {MAX_SIZE - Header.header_size_bytes}')
         self._hash_object.update(binary_data)
         self._temp_file.write(binary_data)
         self._temp_file.flush()
@@ -104,44 +103,34 @@ class BinaryReader:
 
     @property
     def header(self):
+        if len(self._header) < Header.header_size_bytes:
+            return None
         return Header.from_bytes(self._header, HASH_DIGEST_LENGTH)
 
-    @property
-    def _len(self):
-        if len(self._header) < HEADER_SIZE:
-            return None
-        return self.header.data_size_bytes
-
-    @property
-    def _hexdigest(self):
-        if len(self._header) < HEADER_SIZE:
-            return None
-        return self.header.hash_digest
-
     def is_complete(self):
-        return (self._hexdigest, self._len) == (self._hash_object.digest(), len(self._data))
+        return (self.header.hash_digest, self.header.data_size_bytes) == (self._hash_object.digest(), len(self._data))
 
     def try_read(self) -> Optional[bytearray]:
         if self._file is None:
             raise IOError('file never opened for reading')
         while True:
-            if len(self._header) < HEADER_SIZE:
+            if len(self._header) < Header.header_size_bytes:
                 # read chunk into header buffer, then copy excess to data buffer
                 self._header.extend(self._file.read(4 * 1024 * 1024))
-                self._data.extend(self._header[HEADER_SIZE:])
-                self._hash_object.update(self._header[HEADER_SIZE:])
+                self._data.extend(self._header[Header.header_size_bytes:])
+                self._hash_object.update(self._header[Header.header_size_bytes:])
                 # truncate header buffer
-                _header = self._header[:HEADER_SIZE]
+                _header = self._header[:Header.header_size_bytes]
                 self._header.clear()
                 self._header.extend(_header)
-            elif len(self._data) < self._len:
+            elif len(self._data) < self.header.data_size_bytes:
                 _chunk = self._file.read(4 * 1024 * 1024)
                 if not _chunk:  # unable to read any data, file still incomplete
                     break  # can retry later to read the rest of the file
                 self._data.extend(_chunk)
                 self._hash_object.update(_chunk)
-            elif len(self._data) > self._len:
-                raise IOError(f'data len {len(self._data)} greater than expected len {self._len}')
+            elif len(self._data) > self.header.data_size_bytes:
+                raise IOError(f'data len {len(self._data)} greater than expected len {self.header.data_size_bytes}')
             elif self.is_complete():
                 break
             else:  # correct data length but wrong hash, either data or header corrupted
@@ -156,7 +145,7 @@ class BinaryReader:
 
 if __name__ == '__main__':
     with BinaryWriter('test.bin', overwrite=True) as f:
-        f.write(b'qwertyuiopasdfghjklzxcvbnm')
+        f.write(b'hello world')
     with BinaryReader('test.bin') as f:
         for _ in range(10):
             print(f.try_read())
