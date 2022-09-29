@@ -59,7 +59,10 @@ allow api calls using a file transfer pipe
   * see also TCP Vegas, which attempts something similar, meaning it's not entirely unreasonable to attempt
   * maybe also calculate error rate?
   * priority queue?
-  * 
+* [ ] how to handle nacks? 
+  * not stateful and may need to be retransmitted
+  * but we don't want to cause an avalanche of nacks, which could happen if a nack message is nacked
+  * also it's optional since we'll eventually hit retransmit timeout
 
 
 ## how (v2 - reinventing the ~~wheel~~ osi model)
@@ -88,14 +91,15 @@ allow api calls using a file transfer pipe
 
 ### server state
 
+* own private key (if using pki)
 * per other server
-  * public key or shared secret
+  * other public key / shared secret
   * retransmission timeout
     * plus additional delay for seconds per megabyte or something?
   * own lamport clock
     * own last sent
     * last contiguous received
-    * out of order received
+    * out of order received <- property calculated from inbox?
   * other lamport clock
     * received
     * sent
