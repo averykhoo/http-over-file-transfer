@@ -24,6 +24,7 @@ class OutboxItem:
     acked: Optional[datetime.datetime] = None  # this could be a bool
 
 
+@dataclass
 class InboxItem:
     message: Optional[Message] = None
     packet_timestamp: Optional[datetime.datetime] = None
