@@ -54,6 +54,8 @@ class Messenger:
 
     nack_hashes: List[str] = field(default_factory=list)
     _sent_nack_hashes: Counter = field(default_factory=Counter)
+    # todo: collect nacks in a set to calculate stats to optimize nack retransmits and pessimistic retransmits
+    # todo: support pessimistic retransmits
 
     @property
     def clock_self(self) -> int:

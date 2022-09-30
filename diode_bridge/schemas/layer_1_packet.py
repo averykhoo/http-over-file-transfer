@@ -14,9 +14,11 @@ class ContentType(Enum):
 
 
 class Metadata(BaseModel):
+    # todo: integrate into new packet header
+    # todo: add checksum to packet header when converting to bytes
     sender_uuid: UUID
     recipient_uuid: UUID
-    sent_timestamp: datetime.datetime  # todo: this has to be unique per-packet
+    sent_timestamp: datetime.datetime  # todo: this has to be unique per-packet, maybe use uuid7 instead
     protocol_version: conint(ge=1) = 1
 
 
@@ -38,3 +40,6 @@ class Packet(BaseModel):
     metadata: Metadata
     messages: List[Message]
     control: Optional[Control] = None
+
+    def __bytes__(self):
+        raise NotImplementedError  # todo

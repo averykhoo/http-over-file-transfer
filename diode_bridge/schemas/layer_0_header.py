@@ -5,6 +5,7 @@ from uuid import UUID
 
 @dataclass
 class PacketSenderRecipient:
+    # todo: integrate into new packet header
     sender_uuid: UUID
     recipient_uuid: UUID
 
@@ -25,6 +26,7 @@ class PacketSenderRecipient:
 
 @dataclass
 class Header:
+    # todo: integrate into new packet header
     hash_digest: bytes
     data_size_bytes: int
     header_size_bytes = 64
