@@ -1,4 +1,26 @@
 from dataclasses import dataclass
+from pathlib import Path
+from uuid import UUID
+
+
+@dataclass
+class PacketSenderRecipient:
+    sender_uuid: UUID
+    recipient_uuid: UUID
+
+    @classmethod
+    def from_path(cls, path: Path) -> 'PacketSenderRecipient':
+        _path = Path(path)
+        if _path.is_dir():
+            raise IsADirectoryError(path)
+        if not _path.exists():
+            raise FileNotFoundError(path)
+        if _path.suffix != '.packet':
+            raise ValueError(f'{path} is not a `.packet` file')
+        if _path.stem.count('--') != 2:
+            raise ValueError('file may have been renamed')
+        _sender, _recipient, _timestamp = _path.stem.split('--')
+        return PacketSenderRecipient(UUID(_sender), UUID(_recipient))
 
 
 @dataclass

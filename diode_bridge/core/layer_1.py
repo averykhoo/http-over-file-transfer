@@ -1,9 +1,13 @@
+"""
+Layer 1: reliably synchronize a set of messages
+
+todo: load/dump messenger class for persistence, or use an sqlite with 3 tables: metadata, inbox, outbox
+"""
 import datetime
 import time
 import uuid
 from dataclasses import dataclass
 from dataclasses import field
-from typing import Iterable
 from typing import List
 from typing import Optional
 from typing import Union
@@ -33,10 +37,10 @@ class InboxItem:
 
 
 @dataclass
-class Server:
+class Messenger:
     self_uuid: UUID
     other_uuid: UUID
-    retransmission_timeout: datetime.timedelta = datetime.timedelta(seconds=60)
+    retransmission_timeout: datetime.timedelta = datetime.timedelta(seconds=5)
     max_size_bytes: int = 100 * 1024 * 124  # of data, not the binary thing, so leave some overhead
 
     outbox: List[OutboxItem] = field(default_factory=list)  # outbox[i].message.message_id == i + 1
@@ -44,6 +48,9 @@ class Server:
 
     _cached_clock_other: int = 0
     _cached_other_clock_self: int = 0
+    # todo: cache the other two and enforce monotonicity
+
+    nack_hashes: List[str] = field(default_factory=list)
 
     @property
     def clock_self(self) -> int:
@@ -127,10 +134,7 @@ class Server:
         else:
             raise TypeError(data)
 
-    def create_packet(self,
-                      retransmission_timeout: Optional[datetime.timedelta] = None,
-                      nack_hashes: Iterable[str] = (),
-                      ) -> Packet:
+    def create_packet(self, retransmission_timeout: Optional[datetime.timedelta] = None) -> Packet:
         # allow overwriting the retransmission timeout to immediately resend
         if retransmission_timeout is None:
             retransmission_timeout = self.retransmission_timeout
@@ -153,15 +157,19 @@ class Server:
             messages.append(outbox_item.message)
 
         # create packet
-        return Packet(metadata=Metadata(sender_uuid=self.self_uuid,
-                                        recipient_uuid=self.other_uuid,
-                                        sent_timestamp=current_timestamp),
-                      messages=messages,
-                      control=Control(sender_clock_sender=self.clock_self,
-                                      sender_clock_recipient=self.clock_other,
-                                      sender_clock_out_of_order=self.clock_out_of_order,
-                                      recipient_clock_sender=self.other_clock_self,
-                                      nack_hashes=sorted(set(nack_hashes))))
+        out = Packet(metadata=Metadata(sender_uuid=self.self_uuid,
+                                       recipient_uuid=self.other_uuid,
+                                       sent_timestamp=current_timestamp),
+                     messages=messages,
+                     control=Control(sender_clock_sender=self.clock_self,
+                                     sender_clock_recipient=self.clock_other,
+                                     sender_clock_out_of_order=self.clock_out_of_order,
+                                     recipient_clock_sender=self.other_clock_self,
+                                     nack_hashes=sorted(set(self.nack_hashes))))
+
+        # todo: resend nack more than once, maybe use a counter?
+        self.nack_hashes.clear()
+        return out
 
     def packet_send(self, packet: Packet, packet_hash: str):
         # double-check the uuids
@@ -211,6 +219,7 @@ class Server:
         # this could be optimized by tracking un-acked hashes in a dict, but it also means additional complexity
         nack_hashes = set(packet.control.nack_hashes)
         if nack_hashes:
+            print(f'nacked {len(nack_hashes)}')
             for outbox_item in self.outbox[self.clock_other:]:
                 if outbox_item.acked:
                     continue
@@ -227,8 +236,8 @@ class Server:
 
 
 if __name__ == '__main__':
-    s1 = Server(self_uuid=uuid.uuid4(), other_uuid=uuid.uuid4())
-    s2 = Server(self_uuid=s1.other_uuid, other_uuid=s1.self_uuid)
+    s1 = Messenger(self_uuid=uuid.uuid4(), other_uuid=uuid.uuid4())
+    s2 = Messenger(self_uuid=s1.other_uuid, other_uuid=s1.self_uuid)
 
     p1_0 = s1.create_packet()
     print(p1_0)
@@ -247,7 +256,8 @@ if __name__ == '__main__':
     p1_2 = s1.create_packet()
     print(p1_2)
 
-    p2_0 = s2.create_packet(nack_hashes=['some-hash-hex-digest-1-1'])
+    s2.nack_hashes.extend(['some-hash-hex-digest-1-1', 'some-other-hash-hex-digest'])
+    p2_0 = s2.create_packet()
     print(p2_0)
     s1.packet_receive(p2_0)
 

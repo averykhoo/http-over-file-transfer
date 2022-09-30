@@ -15,7 +15,7 @@ class ContentType(Enum):
 class Metadata(BaseModel):
     sender_uuid: UUID
     recipient_uuid: UUID
-    sent_timestamp: datetime.datetime
+    sent_timestamp: datetime.datetime  # todo: this has to be unique per-packet
     protocol_version: int = 1
 
 

@@ -1,29 +1,22 @@
 """
 Layer 0: reliably write and read files on some network folder
-
-* some folder
-  * recipient
-    * {sender}--{recipient}--{id}.json
-* write as a hidden file with a . prefix then rename/move once done
-* read only when sure the file is fully written - either keep state of timestamp and file size bytes or use mtime/ctime
-  * handle weird / negative time differences between reading and writing?
-  * needs a timeout after last byte is written before we read the file?
-    * or just yolo for reading, ignore/skip errors, and use this timeout only to delete invalid files?
-* maybe add error correction?
-* add compression via `zlib.compress`
 """
 import datetime
 import hashlib
 import math
+import random
 import shutil
 import time
-import uuid
 from pathlib import Path
 from typing import Optional
 from typing import Union
+from uuid import uuid4
 
 # header will contain a hash and the data length
+from diode_bridge.dependencies.jose_wrapper import deserialize
+from diode_bridge.dependencies.jose_wrapper import serialize
 from diode_bridge.schemas.layer_0_header import Header
+from diode_bridge.schemas.layer_1_packet import Packet
 
 HASH_ALGORITHM = hashlib.sha384
 HASH_DIGEST_LENGTH = len(HASH_ALGORITHM(b'\0').digest())
@@ -40,7 +33,7 @@ class BinaryWriter:
             raise FileExistsError(path)
         self._path.parent.mkdir(parents=True, exist_ok=True)
 
-        self._temp_file_name = temp_file_name or f'.{datetime.date.today().isoformat()}.{uuid.uuid4()}.partial'
+        self._temp_file_name = temp_file_name or f'.{datetime.date.today().isoformat()}.{uuid4()}.partial'
         self._temp_file_path = self._path.parent / self._temp_file_name
         if self._temp_file_path.exists():
             raise FileExistsError(temp_file_name or self._temp_file_name)
@@ -48,6 +41,10 @@ class BinaryWriter:
 
         self._hash_object = HASH_ALGORITHM()
         self._len = 0
+
+    @property
+    def header(self) -> Header:
+        return Header(self._hash_object.digest(), self._len)
 
     def __enter__(self):
         if self._temp_file is None:
@@ -62,7 +59,7 @@ class BinaryWriter:
         # write header
         if not self._temp_file.closed:
             self._temp_file.seek(0)
-            self._temp_file.write(bytes(Header(self._hash_object.digest(), self._len)))
+            self._temp_file.write(bytes(self.header))
             self._temp_file.close()
             shutil.move(self._temp_file_path, self._path)
 
@@ -81,10 +78,10 @@ class BinaryWriter:
 
 class BinaryReader:
     def __init__(self, path):
-        self._path = Path(path)
-        if self._path.is_dir():
+        self.path = Path(path)
+        if self.path.is_dir():
             raise IsADirectoryError(path)
-        elif not self._path.exists():
+        elif not self.path.exists():
             raise FileNotFoundError(path)
         self._file = None
         self._data = bytearray()
@@ -92,7 +89,7 @@ class BinaryReader:
         self._hash_object = HASH_ALGORITHM()
 
     def __enter__(self):
-        self._file = self._path.open('rb')
+        self._file = self.path.open('rb')
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -143,13 +140,49 @@ class BinaryReader:
         return len(self._data)
 
 
+def write_packet(packet: Packet, folder, overwrite=False) -> Header:
+    timestamp = packet.metadata.sent_timestamp.strftime('%Y-%m-%d-%H-%M-%S-%f')
+    file_name = f'{packet.metadata.sender_uuid}--{packet.metadata.recipient_uuid}--{timestamp}.packet'
+    file_path = Path(folder) / str(packet.metadata.recipient_uuid) / file_name
+    file_path.parent.mkdir(parents=True, exist_ok=True)
+    with BinaryWriter(file_path, overwrite=overwrite) as f:
+        f.write(serialize(packet))
+        out = f.header
+
+    # randomly corrupt files
+    if random.random() < 0.75:
+        print('!!!', file_path)
+        with file_path.open(mode='wb') as f:
+            f.write(bytes(out))
+            f.write(b'\0' * 32)
+    return out
+
+
+def read_packet_blocking(path, timeout_seconds: Optional[int] = None) -> Packet:
+    t_start = time.monotonic()
+    if timeout_seconds is None:
+        timeout_seconds = float('inf')
+    if timeout_seconds < 0:
+        raise ValueError(timeout_seconds)
+    t_max = t_start + timeout_seconds
+
+    with BinaryReader(path) as f:
+        while time.monotonic() < t_max:
+            data = f.try_read()
+            if data is not None:
+                return deserialize(data)
+            time.sleep(0.5)
+
+        raise TimeoutError(f'timed out (file size is {f.size_bytes()} bytes, expected {f.header.data_size_bytes})')
+
+
 if __name__ == '__main__':
-    with BinaryWriter('test.bin', overwrite=True) as f:
-        f.write(b'hello world')
-    with BinaryReader('test.bin') as f:
+    with BinaryWriter('test.bin', overwrite=True) as f_test:
+        f_test.write(b'hello world')
+    with BinaryReader('test.bin') as f_test:
         for _ in range(10):
-            print(f.try_read())
-            print(f.size_bytes())
-            if f.is_complete():
+            print(f_test.try_read())
+            print(f_test.size_bytes())
+            if f_test.is_complete():
                 break
             time.sleep(5)

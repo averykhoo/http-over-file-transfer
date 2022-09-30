@@ -3,7 +3,7 @@ acts as a wrapper for some jwt/jwe library
 undecided which library to use, but it shouldn't matter
 for now, just passthrough
 """
-from typing import Optional
+import json
 from typing import Union
 
 from diode_bridge.schemas.layer_1_packet import Packet
@@ -15,14 +15,13 @@ def serialize(packet: Packet) -> bytes:
     return json.dumps({'pretend-this-is-a-jwt-jwe': json.loads(packet.json())}).encode('ascii')
 
 
-def deserialize(binary_data: Union[bytes, bytearray]) -> Optional[Packet]:
+def deserialize(binary_data: Union[bytes, bytearray]) -> Packet:
     # todo: reverse of serialize
     return Packet.parse_obj(json.loads(binary_data.decode('ascii'))['pretend-this-is-a-jwt-jwe'])
 
 
 if __name__ == '__main__':
     import datetime
-    import json
     import random
     import uuid
 
