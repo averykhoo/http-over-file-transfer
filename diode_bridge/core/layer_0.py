@@ -150,7 +150,7 @@ def write_packet(packet: Packet, folder, overwrite=False) -> Header:
         out = f.header
 
     # randomly corrupt files
-    if random.random() < 0.75:
+    if random.random() < 0.5:
         print('!!!', file_path)
         with file_path.open(mode='wb') as f:
             f.write(bytes(out))

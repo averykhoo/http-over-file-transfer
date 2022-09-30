@@ -105,7 +105,7 @@ class Messenger:
             'self_clock_self':          self.clock_self,
             'self_clock_other':         self.clock_other,
             'self_clock_out_of_order':  self.clock_out_of_order,
-            'other_clock_self':         self.other_clock_self,  # todo: fix off-by-one error
+            'other_clock_self':         self.other_clock_self,
             'other_clock_other':        self.other_clock_other,
             'other_clock_out_of_order': self.other_clock_out_of_order,
         }
@@ -125,17 +125,20 @@ class Messenger:
             _data = data.encode('utf8')
             if len(_data) > self.max_size_bytes:
                 raise ValueError('too big')
-            self.outbox.append(OutboxItem(Message(message_id=len(self.outbox),
+            self.outbox.append(OutboxItem(Message(message_id=len(self.outbox) + 1,
                                                   content_type=ContentType.STRING,
                                                   content=_data)))
         elif isinstance(data, bytes):
             if len(data) > self.max_size_bytes:
                 raise ValueError('too big')
-            self.outbox.append(OutboxItem(Message(message_id=len(self.outbox),
+            self.outbox.append(OutboxItem(Message(message_id=len(self.outbox) + 1,
                                                   content_type=ContentType.BINARY,
                                                   content=data)))
         else:
             raise TypeError(data)
+
+        for i, outbox_item in enumerate(self.outbox):
+            assert outbox_item.message.message_id == i + 1, (i, outbox_item)
 
     def create_packet(self, retransmission_timeout: Optional[datetime.timedelta] = None) -> Packet:
         # allow overwriting the retransmission timeout to immediately resend
@@ -200,8 +203,9 @@ class Messenger:
                 self.inbox[i].acked = packet.metadata.sent_timestamp
         self._cached_clock_other = packet.control.sender_clock_recipient
         for i in packet.control.sender_clock_out_of_order:
-            if not self.inbox[i].acked:
-                self.inbox[i].acked = packet.metadata.sent_timestamp
+            assert self.inbox[i - 1].message.message_id == i
+            if not self.inbox[i - 1].acked:
+                self.inbox[i - 1].acked = packet.metadata.sent_timestamp
         for message in packet.messages:
             if self.outbox[message.message_id - 1].acked:
                 continue
@@ -209,6 +213,7 @@ class Messenger:
             self.outbox[message.message_id - 1].packet_hash = packet_hash
 
     def packet_receive(self, packet: Packet):
+        print('received', packet)
         # double-check the uuids
         if packet.metadata.sender_uuid != self.other_uuid:
             raise KeyError('mismatched sender uuid')
@@ -224,8 +229,9 @@ class Messenger:
                 self.outbox[i].acked = packet.metadata.sent_timestamp
         self._cached_other_clock_self = packet.control.sender_clock_recipient
         for i in packet.control.sender_clock_out_of_order:
-            if not self.outbox[i].acked:
-                self.outbox[i].acked = packet.metadata.sent_timestamp
+            assert self.outbox[i - 1].message.message_id == i
+            if not self.outbox[i - 1].acked:
+                self.outbox[i - 1].acked = packet.metadata.sent_timestamp
         for i in range(packet.control.recipient_clock_sender):
             if not self.inbox[i].ack_acked:
                 self.inbox[i].ack_acked = packet.metadata.sent_timestamp
@@ -248,6 +254,10 @@ class Messenger:
                 continue
             self.inbox[message.message_id - 1].message = message
             self.inbox[message.message_id - 1].packet_timestamp = packet.metadata.sent_timestamp
+
+        for i, inbox_item in enumerate(self.inbox):
+            if inbox_item.message:
+                assert inbox_item.message.message_id == i + 1, (i, inbox_item)
 
 
 if __name__ == '__main__':

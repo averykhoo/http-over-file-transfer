@@ -149,16 +149,16 @@ if __name__ == '__main__':
 
     print([i.message.content if i.message else None for i in m1.inbox])
     print([i.message.content if i.message else None for i in m2.inbox])
-
-    sync()
-
-    print([i.message.content if i.message else None for i in m1.inbox])
-    print([i.message.content if i.message else None for i in m2.inbox])
-
-    sync()
-
-    print([i.message.content if i.message else None for i in m1.inbox])
-    print([i.message.content if i.message else None for i in m2.inbox])
+    #
+    # sync()
+    #
+    # print([i.message.content if i.message else None for i in m1.inbox])
+    # print([i.message.content if i.message else None for i in m2.inbox])
+    #
+    # sync()
+    #
+    # print([i.message.content if i.message else None for i in m1.inbox])
+    # print([i.message.content if i.message else None for i in m2.inbox])
 
     print(m1.debug_clocks)
     print(m2.debug_clocks)
