@@ -6,6 +6,7 @@ todo: load/dump messenger class for persistence, or use an sqlite with 3 tables:
 import datetime
 import time
 import uuid
+from collections import Counter
 from dataclasses import dataclass
 from dataclasses import field
 from typing import List
@@ -42,6 +43,7 @@ class Messenger:
     other_uuid: UUID
     retransmission_timeout: datetime.timedelta = datetime.timedelta(seconds=5)
     max_size_bytes: int = 100 * 1024 * 124  # of data, not the binary thing, so leave some overhead
+    transmit_nack_how_many_times: int = 5
 
     outbox: List[OutboxItem] = field(default_factory=list)  # outbox[i].message.message_id == i + 1
     inbox: List[InboxItem] = field(default_factory=list)  # inbox[i].message.message_id == i + 1
@@ -51,6 +53,7 @@ class Messenger:
     # todo: cache the other two and enforce monotonicity
 
     nack_hashes: List[str] = field(default_factory=list)
+    _sent_nack_hashes: Counter = field(default_factory=Counter)
 
     @property
     def clock_self(self) -> int:
@@ -102,7 +105,7 @@ class Messenger:
             'self_clock_self':          self.clock_self,
             'self_clock_other':         self.clock_other,
             'self_clock_out_of_order':  self.clock_out_of_order,
-            'other_clock_self':         self.other_clock_self,
+            'other_clock_self':         self.other_clock_self,  # todo: fix off-by-one error
             'other_clock_other':        self.other_clock_other,
             'other_clock_out_of_order': self.other_clock_out_of_order,
         }
@@ -167,8 +170,20 @@ class Messenger:
                                      recipient_clock_sender=self.other_clock_self,
                                      nack_hashes=sorted(set(self.nack_hashes))))
 
-        # todo: resend nack more than once, maybe use a counter?
+        # housekeeping of nacks
+        for nack_hash in self.nack_hashes:
+            self._sent_nack_hashes[nack_hash] += 1
         self.nack_hashes.clear()
+        to_remove = []
+        for nack_hash, times_sent in self._sent_nack_hashes.items():
+            if times_sent > self.transmit_nack_how_many_times:
+                to_remove.append(nack_hash)
+            else:
+                self.nack_hashes.append(nack_hash)
+        for nack_hash in to_remove:
+            del self._sent_nack_hashes[nack_hash]
+
+        # return the packet
         return out
 
     def packet_send(self, packet: Packet, packet_hash: str):
