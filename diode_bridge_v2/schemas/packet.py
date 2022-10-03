@@ -17,18 +17,6 @@ MAX_INT_32 = 2 ** 31 - 1  # max 32-bit signed integer == 2_147_483_647
 HEADER_DIGEST_SIZE = 8
 
 
-def validate_header(header_data: bytes, header_size: Optional[int]):
-    # validate length
-    if header_size is not None and len(header_data) != header_size + HEADER_DIGEST_SIZE:
-        raise ValueError('incorrect length of bytes input')
-
-    # validate hash
-    _expected_hash = header_data[-HEADER_DIGEST_SIZE:]
-    _actual_hash = hashlib.blake2b(header_data[:-HEADER_DIGEST_SIZE], digest_size=HEADER_DIGEST_SIZE).digest()
-    if _actual_hash != _expected_hash:
-        raise ValueError('incorrect hash')
-
-
 class PacketHeader(BaseModel):
     sender_uuid: UUID
     recipient_uuid: UUID
@@ -48,7 +36,17 @@ class PacketHeader(BaseModel):
 
     @classmethod
     def from_bytes(cls, binary_data):
-        validate_header(binary_data, 16 + 16 + 16 + 4 + 4)
+        # validate length
+        if len(binary_data) != 16 + 16 + 16 + 4 + 4 + HEADER_DIGEST_SIZE:
+            raise ValueError('incorrect length of bytes input')
+
+        # validate hash
+        _expected_hash = binary_data[-HEADER_DIGEST_SIZE:]
+        _actual_hash = hashlib.blake2b(binary_data[:-HEADER_DIGEST_SIZE], digest_size=HEADER_DIGEST_SIZE).digest()
+        if _actual_hash != _expected_hash:
+            raise ValueError('incorrect hash')
+
+        # create packet header
         return PacketHeader(sender_uuid=coerce.to_uuid(binary_data[0:16]),
                             recipient_uuid=coerce.to_uuid(binary_data[16:32]),
                             packet_uuid=coerce.to_uuid(binary_data[32:48]),
@@ -73,12 +71,15 @@ class MessageHeader(BaseModel):
         out.extend(coerce.from_unsigned_integer32(self.content_length))  # 4 bytes
         out.extend(coerce.from_hex(self.content_hash))  # 32 bytes
         out.extend(coerce.from_unsigned_integer16(self.content_type.value()))  # 2 bytes
-        out.extend(hashlib.blake2b(out, digest_size=HEADER_DIGEST_SIZE).digest())
         return bytes(out)
 
     @classmethod
     def from_bytes(cls, binary_data):
-        validate_header(binary_data, 8 + 4 + 32 + 2)
+        # validate length
+        if len(binary_data) != 8 + 4 + 32 + 2:
+            raise ValueError('incorrect length of bytes input')
+
+        # create message header
         return MessageHeader(message_id=coerce.to_unsigned_integer64(binary_data[0:8]),
                              content_length=coerce.to_unsigned_integer32(binary_data[8:12]),
                              content_hash=coerce.to_hex(binary_data[12:44]),
@@ -122,27 +123,50 @@ class Control(BaseModel):
 
     @classmethod
     def from_bytes(cls, binary_data: bytes):
-        validate_header(binary_data, None)  # impractical to validate a variable-length thing
+
+        # validate hash
+        _expected_hash = binary_data[-HEADER_DIGEST_SIZE:]
+        _actual_hash = hashlib.blake2b(binary_data[:-HEADER_DIGEST_SIZE], digest_size=HEADER_DIGEST_SIZE).digest()
+        if _actual_hash != _expected_hash:
+            raise ValueError('incorrect hash')
+
+        # parse uint64
         cursor = 0
         _sender_clock_sender = coerce.to_unsigned_integer64(binary_data[cursor:cursor + 8])
         cursor += 8
+
+        # parse uint64
         _sender_clock_recipient = coerce.to_unsigned_integer64(binary_data[cursor:cursor + 8])
         cursor += 8
+
+        # parse uint32
         _n_sacks = coerce.to_unsigned_integer32(binary_data[cursor:cursor + 4])
         cursor += 4
+
+        # parse list of uint64
         _sender_clock_out_of_order = []
         for _ in range(_n_sacks):
             _sender_clock_out_of_order.append(coerce.to_unsigned_integer64(binary_data[cursor:cursor + 8]))
             cursor += 8
+
+        # parse uint64
         _recipient_clock_sender = coerce.to_unsigned_integer64(binary_data[cursor:cursor + 8])
         cursor += 8
+
+        # parse uint32
         _n_nacks = coerce.to_unsigned_integer32(binary_data[cursor:cursor + 4])
         cursor += 4
+
+        # parse list of uuid
         _nack_uuids = []
         for _ in range(_n_nacks):
             _nack_uuids.append(coerce.to_uuid(binary_data[cursor:cursor + 16]))
             cursor += 16
+
+        # validate header length
         assert cursor + HEADER_DIGEST_SIZE == len(binary_data)
+
+        # create object
         return Control(sender_clock_sender=_sender_clock_sender,
                        sender_clock_recipient=_sender_clock_recipient,
                        sender_clock_out_of_order=_sender_clock_out_of_order,
