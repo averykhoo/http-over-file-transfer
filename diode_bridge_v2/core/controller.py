@@ -42,7 +42,12 @@ class Server:
                 warnings.warn(f'incorrect recipient for {path}, expected {self.uuid}, got {_recipient}')
                 continue
 
-            # add to files
+            # assume corrupted if less than 4 bytes
+            if path.stat().st_size < 4:
+                messenger = self.messengers[UUID(_sender)]
+                messenger.nack_ids.append(_packet_id)
+                continue
+
             self._current_files[path] = BinaryReader(path)
 
     def _try_read_input_files(self,
@@ -117,7 +122,7 @@ if __name__ == '__main__':
 
     def sync():
         global i
-        for _ in range(10):
+        for _ in range(20):
             m1.append_outbox_data(f'm1 {i}')
             s1.run_once()
             # print('m1', m1.debug_clocks)
@@ -125,7 +130,7 @@ if __name__ == '__main__':
             s2.run_once()
             # print('m2', m2.debug_clocks)
             i += 1
-            time.sleep(0.5)
+            time.sleep(0.2)
 
 
     # sync()

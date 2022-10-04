@@ -1,4 +1,6 @@
+import datetime
 import gzip
+import random
 import time
 import warnings
 from dataclasses import dataclass
@@ -7,6 +9,27 @@ from pathlib import Path
 from typing import Optional
 
 from diode_bridge_v2.utils import coerce
+
+DELAY_ASSUME_WRITE_FINISHED_UNSUCCESSFULLY = datetime.timedelta(seconds=1)
+
+
+def corrupt_my_file(path: Path,
+                    probability_truncated=0.5,
+                    probability_bitrot=0.0001,
+                    ):
+    data = bytearray(path.read_bytes())
+
+    if random.random() < probability_truncated:
+        data = data[:random.randint(0, len(data))]
+        print(path, 'truncated')
+
+    for idx in range(len(data)):
+        if random.random() < probability_bitrot:
+            print(path, f'bitrot at {idx}')
+            data[idx] = random.randint(0, 0xFF)
+
+    with path.open('wb') as f:
+        f.write(data)
 
 
 @dataclass
@@ -27,7 +50,7 @@ class BinaryReader:
         self._gzip_reader = gzip.GzipFile(mode='rb', fileobj=self._raw_reader)
 
     @property
-    def is_ready_to_read(self, timeout_seconds=10):
+    def is_ready_to_read(self):
         current_time = time.monotonic()
         current_size = self.path.stat().st_size
 
@@ -42,7 +65,7 @@ class BinaryReader:
             return False
 
         # timeout waiting for write, assume ready
-        if self._prev_time_monotonic + timeout_seconds < current_time:
+        if self._prev_time_monotonic + DELAY_ASSUME_WRITE_FINISHED_UNSUCCESSFULLY.total_seconds() < current_time:
             return True
 
         return False
@@ -92,6 +115,9 @@ class BinaryWriter:
             self._raw_writer.seek(0)
             self._raw_writer.write(coerce.from_unsigned_integer32(size))
             self._raw_writer.close()
+
+        # if random.random() < 0.5:  # fixme: remove in prod
+        corrupt_my_file(self.path)
 
     def write(self, data):
         self._gzip_writer.write(data)

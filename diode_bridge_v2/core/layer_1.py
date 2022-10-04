@@ -217,7 +217,6 @@ class Messenger:
             self.outbox[message.header.message_id - 1].packet_id = packet.header.packet_id
 
     def packet_receive(self, packet: Packet):
-        print('received', packet)
         # double-check the uuids
         if packet.header.sender_uuid != self.other_uuid:
             raise KeyError('mismatched sender uuid')
@@ -244,7 +243,6 @@ class Messenger:
         # this could be optimized by tracking un-acked hashes in a dict, but it also means additional complexity
         nack_ids = set(packet.control.nack_ids)
         if nack_ids:
-            print(f'nacked {len(nack_ids)}')
             for outbox_item in self.outbox[self.clock_other:]:
                 if outbox_item.acked:
                     continue
