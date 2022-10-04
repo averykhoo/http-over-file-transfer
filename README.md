@@ -63,7 +63,10 @@ allow api calls using a file transfer pipe
   * not stateful and may need to be retransmitted
   * but we don't want to cause an avalanche of nacks, which could happen if a nack message is nacked
   * also it's optional since we'll eventually hit retransmit timeout
-
+* [ ] congestion control and bandwidth optimization?
+  * maybe ignore fairness for now, just hog the channel
+  * consider a model based approach like bbr
+    * but since we can get the actual network diagram maybe just optimize it for that?
 
 ## how (v2 - reinventing the ~~wheel~~ osi model)
 
@@ -72,7 +75,7 @@ allow api calls using a file transfer pipe
   * assume the folder is shared among multiple tenants
   * only ways to organize data are by subfolder and filename
   * optionally write multiple sub-files or add error correction
-  * compression should be handled here
+  * compression should be handled here? just write into a gzipfile?
 * layer 1 - reliable secure message log replication
   * bounded message size, maybe up to 100mb
   * signed and encrypted
