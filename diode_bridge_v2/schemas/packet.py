@@ -2,6 +2,7 @@ import datetime
 import hashlib
 import random
 from enum import IntEnum
+from io import BytesIO
 from typing import List
 from typing import Optional
 from typing import Union
@@ -13,7 +14,6 @@ from pydantic import Field
 from pydantic import conint
 from pydantic import constr
 
-from diode_bridge_v2.schemas.data_cursor import DataCursor
 from diode_bridge_v2.utils import coerce
 
 # set the max based on signed integers since that's probably sufficient and makes life easier
@@ -67,8 +67,8 @@ class PacketHeader(BaseModel):
                             protocol_version=coerce.to_unsigned_integer32(binary_data[44:48]))
 
     @classmethod
-    def from_data_cursor(cls, data_cursor: DataCursor):
-        return PacketHeader.from_bytes(data_cursor.read(16 + 16 + 4 + 4 + 4 + 4 + HEADER_DIGEST_SIZE))
+    def from_file(cls, file_io: BytesIO):
+        return PacketHeader.from_bytes(file_io.read(16 + 16 + 4 + 4 + 4 + 4 + HEADER_DIGEST_SIZE))
 
 
 class ContentType(IntEnum):
@@ -107,8 +107,8 @@ class MessageHeader(BaseModel):
                              content_hash=coerce.to_hex(binary_data[10:10 + MESSAGE_DIGEST_SIZE]))
 
     @classmethod
-    def from_data_cursor(cls, data_cursor: DataCursor):
-        return MessageHeader.from_bytes(data_cursor.read(4 + 4 + 2 + MESSAGE_DIGEST_SIZE))
+    def from_file(cls, file_io: BytesIO):
+        return MessageHeader.from_bytes(file_io.read(4 + 4 + 2 + MESSAGE_DIGEST_SIZE))
 
 
 class Message(BaseModel):
@@ -128,19 +128,18 @@ class Message(BaseModel):
         return bytes(self.header) + self.binary_data
 
     @classmethod
-    def from_data_cursor(cls, data_cursor: DataCursor):
-        _header = MessageHeader.from_data_cursor(data_cursor)
-        out = Message(header=_header, binary_data=data_cursor.read(_header.content_length))
+    def from_file(cls, file_io: BytesIO):
+        _header = MessageHeader.from_file(file_io)
+        out = Message(header=_header, binary_data=file_io.read(_header.content_length))
         if hashlib.blake2b(out.binary_data, digest_size=MESSAGE_DIGEST_SIZE).hexdigest() != out.header.content_hash:
             raise ValueError('mismatched hash')
         return out
 
     @classmethod
     def from_bytes(cls, binary_data: bytes):
-        data_cursor = DataCursor(data=binary_data)
-        out = Message.from_data_cursor(data_cursor)
-        if not data_cursor.at_end():
-            print(data_cursor.read(1))
+        file_io = BytesIO(binary_data)
+        out = Message.from_file(file_io)
+        if file_io.read(1):
             raise ValueError('extra unexpected data')
         return out
 
@@ -186,26 +185,32 @@ class Control(BaseModel):
         return bytes(out)
 
     @classmethod
-    def from_data_cursor(cls, data_cursor: DataCursor):
+    def from_file(cls, file_io: BytesIO):
         _hash_object = hashlib.blake2b(digest_size=HEADER_DIGEST_SIZE)
 
-        _sender_clock_sender = coerce.to_unsigned_integer32(data_cursor.read(4, _hash_object))
-        _sender_clock_recipient = coerce.to_unsigned_integer32(data_cursor.read(4, _hash_object))
+        def read_word():
+            nonlocal _hash_object
+            data = file_io.read(4)
+            _hash_object.update(data)
+            return data
 
-        _n_sacks = coerce.to_unsigned_integer32(data_cursor.read(4, _hash_object))
+        _sender_clock_sender = coerce.to_unsigned_integer32(read_word())
+        _sender_clock_recipient = coerce.to_unsigned_integer32(read_word())
+
+        _n_sacks = coerce.to_unsigned_integer32(read_word())
         _sender_clock_out_of_order = []
         for _ in range(_n_sacks):
-            _sender_clock_out_of_order.append(coerce.to_unsigned_integer32(data_cursor.read(4, _hash_object)))
+            _sender_clock_out_of_order.append(coerce.to_unsigned_integer32(read_word()))
 
-        _n_nacks = coerce.to_unsigned_integer32(data_cursor.read(4, _hash_object))
+        _n_nacks = coerce.to_unsigned_integer32(read_word())
         _nack_ids = []
         for _ in range(_n_nacks):
-            _nack_ids.append(coerce.to_unsigned_integer32(data_cursor.read(4, _hash_object)))
+            _nack_ids.append(coerce.to_unsigned_integer32(read_word()))
 
-        _recipient_clock_sender = coerce.to_unsigned_integer32(data_cursor.read(4, _hash_object))
+        _recipient_clock_sender = coerce.to_unsigned_integer32(read_word())
 
         _actual_hash = _hash_object.digest()
-        _expected_hash = data_cursor.read(HEADER_DIGEST_SIZE)
+        _expected_hash = file_io.read(HEADER_DIGEST_SIZE)
         assert _actual_hash == _expected_hash
 
         return Control(sender_clock_sender=_sender_clock_sender,
@@ -216,9 +221,9 @@ class Control(BaseModel):
 
     @classmethod
     def from_bytes(cls, binary_data: bytes):
-        data_cursor = DataCursor(data=binary_data)
-        out = Control.from_data_cursor(data_cursor)
-        if not data_cursor.at_end():
+        file_io = BytesIO(binary_data)
+        out = Control.from_file(file_io)
+        if file_io.read(1):
             raise ValueError('extra unexpected data')
         return out
 
@@ -240,21 +245,21 @@ class Packet(BaseModel):
         return bytes(out)
 
     @classmethod
-    def from_data_cursor(cls, data_cursor: DataCursor):
-        out = Packet(header=PacketHeader.from_data_cursor(data_cursor),
+    def from_file(cls, file_io: BytesIO):
+        out = Packet(header=PacketHeader.from_file(file_io),
                      control=None,
                      messages=[])
 
         # noinspection PyBroadException
         try:
-            out.control = Control.from_data_cursor(data_cursor)
+            out.control = Control.from_file(file_io)
         except Exception:
             return out
 
         # noinspection PyBroadException
         try:
             for _ in range(out.header.num_messages):
-                out.messages.append(Message.from_data_cursor(data_cursor))
+                out.messages.append(Message.from_file(file_io))
         except Exception:
             return out
 
@@ -262,9 +267,9 @@ class Packet(BaseModel):
 
     @classmethod
     def from_bytes(cls, binary_data: bytes):
-        data_cursor = DataCursor(data=binary_data)
-        out = Packet.from_data_cursor(data_cursor)
-        if not data_cursor.at_end():
+        file_io = BytesIO(binary_data)
+        out = Packet.from_file(file_io)
+        if file_io.read(1):
             raise ValueError('extra unexpected data')
         return out
 
