@@ -14,7 +14,7 @@ DELAY_ASSUME_WRITE_FINISHED_UNSUCCESSFULLY = datetime.timedelta(seconds=1)
 
 
 def corrupt_my_file(path: Path,
-                    probability_truncated=0.5,
+                    probability_truncated=0.75,
                     probability_bitrot=0.0001,
                     ):
     data = bytearray(path.read_bytes())
@@ -22,6 +22,7 @@ def corrupt_my_file(path: Path,
     if random.random() < probability_truncated:
         data = data[:random.randint(0, len(data))]
         print(path, 'truncated')
+        data.append(0)
 
     for idx in range(len(data)):
         if random.random() < probability_bitrot:

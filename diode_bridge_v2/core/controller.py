@@ -12,7 +12,7 @@ from diode_bridge_v2.core.layer_0 import BinaryWriter
 from diode_bridge_v2.core.layer_1 import Messenger
 from diode_bridge_v2.schemas.packet import Packet
 
-DELAY_ASSUME_ERROR = datetime.timedelta(seconds=1)
+DELAY_ASSUME_ERROR = datetime.timedelta(seconds=3)
 
 
 @dataclass
@@ -122,18 +122,19 @@ if __name__ == '__main__':
 
     def sync():
         global i
-        for _ in range(20):
-            m1.append_outbox_data(f'm1 {i}')
-            s1.run_once()
-            # print('m1', m1.debug_clocks)
+        for _ in range(5):
+            m1.append_outbox_data({'m1': i})
             m2.append_outbox_data(f'm2 {i}')
-            s2.run_once()
-            # print('m2', m2.debug_clocks)
             i += 1
-            time.sleep(0.2)
+            for _ in range(4):
+                s1.run_once()
+                # print('m1', m1.debug_clocks)
+                s2.run_once()
+                # print('m2', m2.debug_clocks)
+                time.sleep(0.5)
 
 
-    # sync()
+    sync()
 
     m1.append_outbox_data('test test 2 m1')
     m2.append_outbox_data('hello from m2 2')

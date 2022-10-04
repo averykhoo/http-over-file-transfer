@@ -124,20 +124,8 @@ class Messenger:
         assert len(self.other_clock_out_of_order) == 0
         return True
 
-    def append_outbox_data(self, data: Union[str, bytes]):
-        if isinstance(data, str):
-            _data = data.encode('utf8')
-            if len(_data) > self.max_size_bytes:
-                raise ValueError('too big')
-            self.outbox.append(OutboxItem(Message.from_content(message_id=len(self.outbox) + 1,
-                                                               content=_data)))
-        elif isinstance(data, bytes):
-            if len(data) > self.max_size_bytes:
-                raise ValueError('too big')
-            self.outbox.append(OutboxItem(Message.from_content(message_id=len(self.outbox) + 1,
-                                                               content=data)))
-        else:
-            raise TypeError(data)
+    def append_outbox_data(self, data: Union[str, bytes, dict]):
+        self.outbox.append(OutboxItem(Message.from_content(message_id=len(self.outbox) + 1, content=data)))
 
         for i, outbox_item in enumerate(self.outbox):
             assert outbox_item.message.header.message_id == i + 1, (i, outbox_item)
