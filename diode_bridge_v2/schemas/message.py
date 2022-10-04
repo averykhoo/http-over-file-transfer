@@ -2,10 +2,11 @@ import hashlib
 import json
 from enum import IntEnum
 from io import BytesIO
-from typing import Dict
+from typing import Optional
 from typing import Union
 
 from pydantic import BaseModel
+from pydantic import Field
 from pydantic import conint
 from pydantic import constr
 
@@ -22,14 +23,14 @@ class ContentType(IntEnum):
     STRING = 1
     BINARY = 2
     JSON_DICT = 3  # not lists or primitives
+    MULTIPART = 4  # indicates data that requires other data
 
 
-MESSAGE_HEADER_SIZE = 4 + 4 + 2 + MESSAGE_DIGEST_SIZE
+MESSAGE_HEADER_SIZE = 4 + 4 + 2 + MESSAGE_DIGEST_SIZE  # todo: message prev
 
 
 class MessageHeader(BaseModel):
     message_id: conint(ge=1, le=MAX_INT_32)
-    message_next: conint(ge=0, le=MAX_INT_32)  # todo: support for multipart messages, 0 = null
     message_prev: conint(ge=0, le=MAX_INT_32)  # todo: support for multipart messages, 0 = null
 
     content_length: conint(ge=0, le=MAX_INT_32)  # about 2gb max content length
@@ -47,6 +48,7 @@ class MessageHeader(BaseModel):
 
         out = bytearray()
         out.extend(coerce.from_unsigned_integer32(self.message_id))  # 4 bytes
+        # todo: message prev
         out.extend(coerce.from_unsigned_integer32(self.content_length))  # 4 bytes
         out.extend(coerce.from_unsigned_integer16(_content_type_int))  # 2 bytes
         out.extend(coerce.from_hex(self.content_hash))  # MESSAGE_DIGEST_SIZE bytes
@@ -61,6 +63,7 @@ class MessageHeader(BaseModel):
 
         # create message header
         return MessageHeader(message_id=coerce.to_unsigned_integer32(binary_data[0:4]),
+                             # todo: message prev
                              content_length=coerce.to_unsigned_integer32(binary_data[4:8]),
                              content_type=ContentType(coerce.to_unsigned_integer16(binary_data[8:10])),
                              content_hash=coerce.to_hex(binary_data[10:10 + MESSAGE_DIGEST_SIZE]))
@@ -73,6 +76,17 @@ class MessageHeader(BaseModel):
 class Message(BaseModel):
     header: MessageHeader
     binary_data: bytes
+    previous_message: Optional['Message'] = Field(default=None)
+
+    @property
+    def multipart_data(self) -> bytearray:
+        if self.header.message_prev:
+            assert self.previous_message is not None
+            out = self.previous_message.multipart_data
+        else:
+            out = bytearray()
+        out.extend(self.binary_data)
+        return out
 
     @property
     def size_bytes(self):
@@ -81,50 +95,13 @@ class Message(BaseModel):
     @property
     def content(self):
         if self.header.content_type is ContentType.STRING:
-            return coerce.to_string(self.binary_data)
+            return coerce.to_string(self.multipart_data)
         elif self.header.content_type is ContentType.BINARY:
-            return self.binary_data
+            return self.multipart_data
         elif self.header.content_type is ContentType.JSON_DICT:
-            return json.loads(coerce.to_string(self.binary_data))
-        else:
-            raise NotImplementedError
-
-    def multipart_content(self, *messages: 'Message'):
-        _messages: Dict[int, Message] = {message.header.message_id: message for message in messages}
-
-        # append previous messages in reverse order
-        _all_messages = []
-        _prev_message_id = self.header.message_prev
-        while _prev_message_id:
-            if _prev_message_id not in _messages:
-                raise KeyError(f'message {_prev_message_id} not provided')
-            _all_messages.append(_messages[_prev_message_id])
-            _prev_message_id = _messages[_prev_message_id].header.message_prev
-
-        # reverse the list (so it's now in the right order)  and append this message
-        _all_messages.reverse()
-        _all_messages.append(self)
-
-        # get the remaining messages
-        _next_message_id = self.header.message_next
-        while _next_message_id:
-            if _next_message_id not in _messages:
-                raise KeyError(f'message {_next_message_id} not provided')
-            _all_messages.append(_messages[_next_message_id])
-            _next_message_id = _messages[_next_message_id].header.message_next
-
-        # concatenate the message data
-        data = bytearray()
-        for message in _all_messages:
-            data.extend(message.binary_data)
-
-        # reformat and return
-        if self.header.content_type is ContentType.STRING:
-            return coerce.to_string(data)
-        elif self.header.content_type is ContentType.BINARY:
-            return data
-        elif self.header.content_type is ContentType.JSON_DICT:
-            return json.loads(coerce.to_string(data))
+            return json.loads(coerce.to_string(self.multipart_data))
+        elif self.header.content_type is ContentType.MULTIPART:
+            return None
         else:
             raise NotImplementedError
 
@@ -150,7 +127,7 @@ class Message(BaseModel):
         return out
 
     @classmethod
-    def from_content(cls, message_id: int, content: Union[str, bytes]):
+    def from_content(cls, message_id: int, content: Union[str, bytes], previous_message_id: int = 0):
         if isinstance(content, str):
             data = coerce.from_string(content)
             content_type = ContentType.STRING
@@ -169,6 +146,7 @@ class Message(BaseModel):
         content_hash = hashlib.blake2b(data, digest_size=MESSAGE_DIGEST_SIZE).hexdigest()
 
         return Message(header=MessageHeader(message_id=message_id,
+                                            message_prev=previous_message_id,
                                             content_length=len(data),
                                             content_type=content_type,
                                             content_hash=content_hash),
