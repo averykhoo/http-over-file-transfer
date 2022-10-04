@@ -1,6 +1,7 @@
 import datetime
 import hashlib
 import random
+import warnings
 from enum import IntEnum
 from io import BytesIO
 from typing import List
@@ -14,6 +15,8 @@ from pydantic import Field
 from pydantic import conint
 from pydantic import constr
 
+from diode_bridge_v2.core.layer_0 import BinaryReader
+from diode_bridge_v2.core.layer_0 import BinaryWriter
 from diode_bridge_v2.utils import coerce
 
 # set the max based on signed integers since that's probably sufficient and makes life easier
@@ -27,6 +30,9 @@ def get_utc_timestamp():
     return datetime.datetime.utcnow().replace(microsecond=0, tzinfo=datetime.timezone.utc)
 
 
+PACKET_HEADER_SIZE = 16 + 16 + 4 + 4 + 4 + 4 + HEADER_DIGEST_SIZE
+
+
 class PacketHeader(BaseModel):
     sender_uuid: UUID
     recipient_uuid: UUID
@@ -34,6 +40,14 @@ class PacketHeader(BaseModel):
     num_messages: conint(ge=0, le=MAX_INT_32)
     packet_timestamp: datetime.datetime = Field(default_factory=get_utc_timestamp)
     protocol_version: conint(ge=1, le=MAX_INT_32) = 2
+
+    @property
+    def size_bytes(self):
+        return PACKET_HEADER_SIZE
+
+    @property
+    def filename(self):
+        return f'{self.recipient_uuid}/{self.sender_uuid}--{self.recipient_uuid}--{self.packet_id}.packet'
 
     def __bytes__(self) -> bytes:
         out = bytearray()
@@ -44,12 +58,13 @@ class PacketHeader(BaseModel):
         out.extend(coerce.from_datetime32(self.packet_timestamp))  # 4 bytes
         out.extend(coerce.from_unsigned_integer32(self.protocol_version))  # 4 bytes
         out.extend(hashlib.blake2b(out, digest_size=HEADER_DIGEST_SIZE).digest())
+        assert len(out) == self.size_bytes
         return bytes(out)
 
     @classmethod
     def from_bytes(cls, binary_data):
         # validate length
-        if len(binary_data) != 16 + 16 + 4 + 4 + 4 + 4 + HEADER_DIGEST_SIZE:
+        if len(binary_data) != PACKET_HEADER_SIZE:
             raise ValueError('incorrect length of bytes input')
 
         # validate hash
@@ -67,8 +82,8 @@ class PacketHeader(BaseModel):
                             protocol_version=coerce.to_unsigned_integer32(binary_data[44:48]))
 
     @classmethod
-    def from_file(cls, file_io: BytesIO):
-        return PacketHeader.from_bytes(file_io.read(16 + 16 + 4 + 4 + 4 + 4 + HEADER_DIGEST_SIZE))
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
+        return PacketHeader.from_bytes(file_io.read(PACKET_HEADER_SIZE))
 
 
 class ContentType(IntEnum):
@@ -76,11 +91,18 @@ class ContentType(IntEnum):
     BINARY = 2
 
 
+MESSAGE_HEADER_SIZE = 4 + 4 + 2 + MESSAGE_DIGEST_SIZE
+
+
 class MessageHeader(BaseModel):
     message_id: conint(ge=1, le=MAX_INT_32)
     content_length: conint(ge=0, le=MAX_INT_32)  # about 2gb max content length
     content_type: ContentType  # 2 bytes
     content_hash: constr(regex=rf'[0-9a-f]{{{MESSAGE_DIGEST_SIZE * 2}}}')  # lowercase hash
+
+    @property
+    def size_bytes(self):
+        return MESSAGE_HEADER_SIZE
 
     def __bytes__(self) -> bytes:
         # typecasting for the type checker
@@ -92,12 +114,13 @@ class MessageHeader(BaseModel):
         out.extend(coerce.from_unsigned_integer32(self.content_length))  # 4 bytes
         out.extend(coerce.from_unsigned_integer16(_content_type_int))  # 2 bytes
         out.extend(coerce.from_hex(self.content_hash))  # MESSAGE_DIGEST_SIZE bytes
+        assert len(out) == self.size_bytes
         return bytes(out)
 
     @classmethod
     def from_bytes(cls, binary_data):
         # validate length
-        if len(binary_data) != 4 + 4 + 2 + MESSAGE_DIGEST_SIZE:
+        if len(binary_data) != MESSAGE_HEADER_SIZE:
             raise ValueError('incorrect length of bytes input')
 
         # create message header
@@ -107,13 +130,17 @@ class MessageHeader(BaseModel):
                              content_hash=coerce.to_hex(binary_data[10:10 + MESSAGE_DIGEST_SIZE]))
 
     @classmethod
-    def from_file(cls, file_io: BytesIO):
-        return MessageHeader.from_bytes(file_io.read(4 + 4 + 2 + MESSAGE_DIGEST_SIZE))
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
+        return MessageHeader.from_bytes(file_io.read(MESSAGE_HEADER_SIZE))
 
 
 class Message(BaseModel):
     header: MessageHeader
     binary_data: bytes
+
+    @property
+    def size_bytes(self):
+        return self.header.size_bytes + len(self.binary_data)
 
     @property
     def content(self):
@@ -125,10 +152,12 @@ class Message(BaseModel):
             raise NotImplementedError
 
     def __bytes__(self):
-        return bytes(self.header) + self.binary_data
+        out = bytes(self.header) + self.binary_data
+        assert len(out) == self.size_bytes
+        return out
 
     @classmethod
-    def from_file(cls, file_io: BytesIO):
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
         _header = MessageHeader.from_file(file_io)
         out = Message(header=_header, binary_data=file_io.read(_header.content_length))
         if hashlib.blake2b(out.binary_data, digest_size=MESSAGE_DIGEST_SIZE).hexdigest() != out.header.content_hash:
@@ -170,6 +199,10 @@ class Control(BaseModel):
     nack_ids: List[conint(ge=1, le=MAX_INT_32)]  # list of packet ids
     recipient_clock_sender: conint(ge=0, le=MAX_INT_32)
 
+    @property
+    def size_bytes(self):
+        return 4 * (len(self.sender_clock_out_of_order) + len(self.nack_ids) + 5) + HEADER_DIGEST_SIZE
+
     def __bytes__(self):
         out = bytearray()
         out.extend(coerce.from_unsigned_integer32(self.sender_clock_sender))  # 4 bytes
@@ -182,10 +215,11 @@ class Control(BaseModel):
             out.extend(coerce.from_unsigned_integer32(_nack))  # 4 bytes
         out.extend(coerce.from_unsigned_integer32(self.recipient_clock_sender))  # 4 bytes
         out.extend(hashlib.blake2b(out, digest_size=HEADER_DIGEST_SIZE).digest())
+        assert len(out) == self.size_bytes, (len(out), self.size_bytes)
         return bytes(out)
 
     @classmethod
-    def from_file(cls, file_io: BytesIO):
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
         _hash_object = hashlib.blake2b(digest_size=HEADER_DIGEST_SIZE)
 
         def read_word():
@@ -233,6 +267,10 @@ class Packet(BaseModel):
     control: Optional[Control]
     messages: List[Message]
 
+    @property
+    def size_bytes(self):
+        return self.header.size_bytes + self.control.size_bytes + sum(msg.size_bytes for msg in self.messages)
+
     def __bytes__(self):
         assert len(self.messages) == self.header.num_messages
         assert self.control is not None
@@ -242,10 +280,12 @@ class Packet(BaseModel):
         out.extend(bytes(self.control))
         for _msg in self.messages:
             out.extend(bytes(_msg))
+        assert len(out) == self.size_bytes
         return bytes(out)
 
     @classmethod
-    def from_file(cls, file_io: BytesIO):
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
+
         out = Packet(header=PacketHeader.from_file(file_io),
                      control=None,
                      messages=[])
@@ -254,13 +294,15 @@ class Packet(BaseModel):
         try:
             out.control = Control.from_file(file_io)
         except Exception:
+            warnings.warn('unable to parse control structure')
             return out
 
         # noinspection PyBroadException
         try:
-            for _ in range(out.header.num_messages):
+            for _i in range(out.header.num_messages):
                 out.messages.append(Message.from_file(file_io))
         except Exception:
+            warnings.warn('unable to parse message')
             return out
 
         return out
@@ -271,7 +313,15 @@ class Packet(BaseModel):
         out = Packet.from_file(file_io)
         if file_io.read(1):
             raise ValueError('extra unexpected data')
-        return out
+
+    def to_file(self, file_io: Union[BytesIO, BinaryWriter]):
+        assert len(self.messages) == self.header.num_messages
+        assert self.control is not None
+
+        file_io.write(bytes(self.header))
+        file_io.write(bytes(self.control))
+        for _msg in self.messages:
+            file_io.write(bytes(_msg))
 
 
 if __name__ == '__main__':
