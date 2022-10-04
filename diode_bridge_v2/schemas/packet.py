@@ -138,8 +138,9 @@ class Message(BaseModel):
     @classmethod
     def from_bytes(cls, binary_data: bytes):
         data_cursor = DataCursor(data=binary_data)
-        out = MessageHeader.from_data_cursor(data_cursor)
+        out = Message.from_data_cursor(data_cursor)
         if not data_cursor.at_end():
+            print(data_cursor.read(1))
             raise ValueError('extra unexpected data')
         return out
 
