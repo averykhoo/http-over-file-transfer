@@ -128,23 +128,19 @@ class Message(BaseModel):
         return bytes(self.header) + self.binary_data
 
     @classmethod
-    def from_bytes(cls, binary_data):
-        _header_size = 4 + 4 + 2 + MESSAGE_DIGEST_SIZE
-        _header = MessageHeader.from_bytes(binary_data[:_header_size])
-        assert len(binary_data) == _header_size + _header.content_length
-
-        out = Message(header=_header, binary_data=binary_data[_header_size:])
-        if hashlib.blake2b(out.binary_data, digest_size=MESSAGE_DIGEST_SIZE).hexdigest() != out.header.content_hash:
-            raise ValueError('mismatched hash')
-
-        return out
-
-    @classmethod
     def from_data_cursor(cls, data_cursor: DataCursor):
         _header = MessageHeader.from_data_cursor(data_cursor)
         out = Message(header=_header, binary_data=data_cursor.read(_header.content_length))
         if hashlib.blake2b(out.binary_data, digest_size=MESSAGE_DIGEST_SIZE).hexdigest() != out.header.content_hash:
             raise ValueError('mismatched hash')
+        return out
+
+    @classmethod
+    def from_bytes(cls, binary_data: bytes):
+        data_cursor = DataCursor(data=binary_data)
+        out = MessageHeader.from_data_cursor(data_cursor)
+        if not data_cursor.at_end():
+            raise ValueError('extra unexpected data')
         return out
 
     @classmethod
