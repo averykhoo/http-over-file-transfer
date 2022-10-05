@@ -26,12 +26,12 @@ class ContentType(IntEnum):
     MULTIPART_FRAGMENT = 4  # indicates data that requires other data
 
 
-MESSAGE_HEADER_SIZE = 4 + 4 + 4 + 2 + MESSAGE_DIGEST_SIZE  # todo: message prev
+MESSAGE_HEADER_SIZE = 4 + 4 + 4 + 2 + MESSAGE_DIGEST_SIZE
 
 
 class MessageHeader(BaseModel):
     message_id: conint(ge=1, le=MAX_INT_32)
-    message_prev: conint(ge=0, le=MAX_INT_32)  # todo: support for multipart messages, 0 = null
+    message_prev: conint(ge=0, le=MAX_INT_32)  # support for multipart messages, 0 = null
 
     content_length: conint(ge=0, le=MAX_INT_32)  # about 2gb max content length
     content_type: ContentType  # 2 bytes
