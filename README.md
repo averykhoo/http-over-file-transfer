@@ -48,25 +48,28 @@ allow api calls using a file transfer pipe
   * make sure the sender and recipient are in the signed portion (as well as the filename)?
 * [x] subfolders?
   * server-2-uuid/server-2--server-1--sequence-id.json.jwt.jwe
-* [ ] retry partial message success?
+* [x] retry partial message success?
   * this is not out of order acks (see also tcp sack)
   * may be useful because the most common error is truncation
 * [ ] rate limiting
   * maximum messages simultaneously in transit?
   * maximum bandwidth?
   * maximum calls from some callee / bytes per day or something
-* [ ] transfer optimization by calculating bandwidth (based on throughput / latency)
+* [x] transfer optimization by calculating bandwidth (based on throughput / latency)
   * see also TCP Vegas, which attempts something similar, meaning it's not entirely unreasonable to attempt
   * maybe also calculate error rate?
+  * truncation stats and sizes to optimize packet size?
   * priority queue?
-* [ ] how to handle nacks? 
+* [x] how to handle nacks? 
   * not stateful and may need to be retransmitted
   * but we don't want to cause an avalanche of nacks, which could happen if a nack message is nacked
   * also it's optional since we'll eventually hit retransmit timeout
-* [ ] congestion control and bandwidth optimization?
+* [x] congestion control? <- no, assume the channel has an infinite queue
   * maybe ignore fairness for now, just hog the channel
   * consider a model based approach like bbr
     * but since we can get the actual network diagram maybe just optimize it for that?
+* [x] pessimistic retransmits? <- no
+  * not necessary (yet)
 
 ## how (v2 - reinventing the ~~wheel~~ osi model)
 

@@ -230,6 +230,7 @@ if __name__ == '__main__':
     assert PacketHeader.from_bytes(bytes(_ph)) == _ph
 
     _mh = MessageHeader(message_id=random.randint(1, MAX_INT_32),
+                        message_prev=0,
                         content_length=random.randint(1, MAX_INT_32),
                         content_type=ContentType.STRING,
                         content_hash='0123456789abcdef' * 2)

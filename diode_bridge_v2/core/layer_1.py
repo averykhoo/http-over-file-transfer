@@ -52,10 +52,9 @@ class Messenger:
     _cached_other_clock_self: int = field(default=0)
     # todo: cache the other two and enforce monotonicity
 
-    nack_ids: List[int] = field(default_factory=list)
+    nack_ids: List[int] = field(default_factory=list)  # todo: make this a set
     _sent_nack_ids: Counter = field(default_factory=Counter)
     # todo: collect nacks in a set to calculate stats to optimize nack retransmits and pessimistic retransmits
-    # todo: support pessimistic retransmits
 
     _num_sent_packets: int = field(default=0)
 

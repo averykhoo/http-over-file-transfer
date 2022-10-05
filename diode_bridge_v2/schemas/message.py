@@ -23,10 +23,10 @@ class ContentType(IntEnum):
     STRING = 1
     BINARY = 2
     JSON_DICT = 3  # not lists or primitives
-    MULTIPART = 4  # indicates data that requires other data
+    MULTIPART_FRAGMENT = 4  # indicates data that requires other data
 
 
-MESSAGE_HEADER_SIZE = 4 + 4 + 2 + MESSAGE_DIGEST_SIZE  # todo: message prev
+MESSAGE_HEADER_SIZE = 4 + 4 + 4 + 2 + MESSAGE_DIGEST_SIZE  # todo: message prev
 
 
 class MessageHeader(BaseModel):
@@ -48,7 +48,7 @@ class MessageHeader(BaseModel):
 
         out = bytearray()
         out.extend(coerce.from_unsigned_integer32(self.message_id))  # 4 bytes
-        # todo: message prev
+        out.extend(coerce.from_unsigned_integer32(self.message_prev))  # 4 bytes
         out.extend(coerce.from_unsigned_integer32(self.content_length))  # 4 bytes
         out.extend(coerce.from_unsigned_integer16(_content_type_int))  # 2 bytes
         out.extend(coerce.from_hex(self.content_hash))  # MESSAGE_DIGEST_SIZE bytes
@@ -63,10 +63,10 @@ class MessageHeader(BaseModel):
 
         # create message header
         return MessageHeader(message_id=coerce.to_unsigned_integer32(binary_data[0:4]),
-                             # todo: message prev
-                             content_length=coerce.to_unsigned_integer32(binary_data[4:8]),
-                             content_type=ContentType(coerce.to_unsigned_integer16(binary_data[8:10])),
-                             content_hash=coerce.to_hex(binary_data[10:10 + MESSAGE_DIGEST_SIZE]))
+                             message_prev=coerce.to_unsigned_integer32(binary_data[4:8]),
+                             content_length=coerce.to_unsigned_integer32(binary_data[8:12]),
+                             content_type=ContentType(coerce.to_unsigned_integer16(binary_data[12:14])),
+                             content_hash=coerce.to_hex(binary_data[14:14 + MESSAGE_DIGEST_SIZE]))
 
     @classmethod
     def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
@@ -100,7 +100,7 @@ class Message(BaseModel):
             return self.multipart_data
         elif self.header.content_type is ContentType.JSON_DICT:
             return json.loads(coerce.to_string(self.multipart_data))
-        elif self.header.content_type is ContentType.MULTIPART:
+        elif self.header.content_type is ContentType.MULTIPART_FRAGMENT:
             return None
         else:
             raise NotImplementedError
