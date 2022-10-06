@@ -60,7 +60,7 @@ allow api calls using a file transfer pipe
   * maybe also calculate error rate?
   * truncation stats and sizes to optimize packet size?
   * priority queue?
-* [x] how to handle nacks? 
+* [x] how to handle nacks?
   * not stateful and may need to be retransmitted
   * but we don't want to cause an avalanche of nacks, which could happen if a nack message is nacked
   * also it's optional since we'll eventually hit retransmit timeout
@@ -69,7 +69,10 @@ allow api calls using a file transfer pipe
   * consider a model based approach like bbr
     * but since we can get the actual network diagram maybe just optimize it for that?
 * [x] pessimistic retransmits? <- no
+  * with enough nack stats we can determine if we should pessimistically assume packet truncation/loss
+  * meaning we retransmit data multiple times by default, without wating for timeout
   * not necessary (yet)
+  * can also optimize the nack retransmit number so they're at least 99% likely to be received
 
 ## how (v2 - reinventing the ~~wheel~~ osi model)
 
@@ -131,7 +134,7 @@ allow api calls using a file transfer pipe
   * handle weird / negative time differences between reading and writing?
   * needs a timeout after last byte is written before we read the file?
     * or just yolo for reading, ignore/skip errors, and use this timeout only to delete invalid files?
-* maybe add error correction? 
+* maybe add error correction?
 
 ### layer 1
 
@@ -175,7 +178,7 @@ allow api calls using a file transfer pipe
   * maybe use a known format?
     * protobuf / flatbuffers
     * cbor / messagepack
-    * avro / parquet / pickle / ion (amazon) / thrift / 
+    * avro / parquet / pickle / ion (amazon) / thrift /
   * message format a bit like jwe / jwt / jws (jose)
     * header
     * data (signed and encrypted with random key and iv)

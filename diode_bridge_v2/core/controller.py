@@ -45,7 +45,7 @@ class Server:
             # assume corrupted if less than 4 bytes
             if path.stat().st_size < 4:
                 messenger = self.messengers[UUID(_sender)]
-                messenger.nack_ids.append(_packet_id)
+                messenger.nack_ids.add(_packet_id)
                 continue
 
             self._current_files[path] = BinaryReader(path)
@@ -77,11 +77,11 @@ class Server:
 
                 # nack incomplete packets
                 if packet.control is None or packet.header.num_messages < len(packet.messages):
-                    messenger.nack_ids.append(packet.header.packet_id)
+                    messenger.nack_ids.add(packet.header.packet_id)
 
             except Exception:
                 open_file.close(delete=delete_error_files)
-                messenger.nack_ids.append(_packet_id)
+                messenger.nack_ids.add(_packet_id)
 
         # prune files
         closed = [path for path, open_file in self._current_files.items() if open_file.closed]

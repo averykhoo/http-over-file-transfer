@@ -13,6 +13,7 @@ from threading import Lock
 from typing import Dict
 from typing import List
 from typing import Optional
+from typing import Set
 from typing import Union
 from uuid import UUID
 
@@ -21,11 +22,15 @@ from pydantic import BaseModel
 from diode_bridge_v2.schemas.message import ContentType
 from diode_bridge_v2.schemas.packet import Control
 from diode_bridge_v2.schemas.packet import Message
+from diode_bridge_v2.schemas.packet import PACKET_HEADER_SIZE
 from diode_bridge_v2.schemas.packet import Packet
 from diode_bridge_v2.schemas.packet import PacketHeader
 from diode_bridge_v2.schemas.packet import get_utc_timestamp
 
-MULTIPART_LIMIT = 20  # * 1024 * 1024  # 20MiB
+MULTIPART_LIMIT_SIZE_BYTES = 20  # * 1024 * 1024  # 20 MiB, based on email attachment size because why not
+PACKET_LIMIT_SIZE_BYTES = 200  # * 1024 * 1024  # 200 MiB, below recommended limit of 500MB to avoid truncation
+NACK_TRANSMIT_COUNT = 5  # transmit nack at least this many times
+RETRANSMISSION_TIMEOUT = datetime.timedelta(seconds=5)
 
 
 @dataclass
@@ -48,9 +53,6 @@ class InboxItem:
 class Messenger:
     self_uuid: UUID
     other_uuid: UUID
-    retransmission_timeout: datetime.timedelta = field(default=datetime.timedelta(seconds=5))
-    max_size_bytes: int = field(default=100 * 1024 * 124)  # of data, not the binary thing, so leave some overhead
-    transmit_nack_how_many_times: int = field(default=5)
 
     outbox: List[OutboxItem] = field(default_factory=list)  # outbox[i].message.header.message_id == i + 1
     _outbox_lock = Lock()
@@ -58,24 +60,29 @@ class Messenger:
     inbox: List[InboxItem] = field(default_factory=list)  # inbox[i].message.header.message_id == i + 1
     _inbox_unlinked_previous_messages: Dict[int, int] = field(default_factory=dict)
 
+    _cached_clock_self: int = field(default=0)
     _cached_clock_other: int = field(default=0)
     _cached_other_clock_self: int = field(default=0)
-    # todo: cache the other two and enforce monotonicity
 
-    nack_ids: List[int] = field(default_factory=list)  # todo: make this a set
+    nack_ids: Set[int] = field(default_factory=set)
     _sent_nack_ids: Counter = field(default_factory=Counter)
-    # todo: collect nacks in a set to calculate stats to optimize nack retransmits and pessimistic retransmits
 
-    _num_sent_packets: int = field(default=0)
+    num_sent_packets: int = field(default=0)
 
     @property
     def clock_self(self) -> int:
-        return len(self.outbox)
+        for i in range(self._cached_clock_self, len(self.outbox)):
+            assert self.outbox[i].message.header.message_id == i + 1, (i, self.outbox[i])
+        self._cached_clock_self = len(self.outbox)
+        return self._cached_clock_self
 
     @property
     def clock_other(self) -> int:
         for i in range(self._cached_clock_other, len(self.inbox)):
-            if not self.inbox[i].message:
+            if self.inbox[i].message:
+                assert self.inbox[i].message.header.message_id == i + 1, (i, self.inbox[i])
+                continue
+            else:
                 self._cached_clock_other = i
                 break
         else:
@@ -137,7 +144,7 @@ class Messenger:
         message = Message.from_content(message_id=len(self.outbox) + 1, content=data)
 
         # single part if size < 10M
-        if len(message.binary_data) <= MULTIPART_LIMIT:
+        if len(message.binary_data) <= MULTIPART_LIMIT_SIZE_BYTES:
             with self._outbox_lock:
                 message.header.message_id = len(self.outbox) + 1  # just to be safe, set this again
                 self.outbox.append(OutboxItem(message))
@@ -147,8 +154,8 @@ class Messenger:
         _previous_message_id = 0
         while _cursor < len(message.binary_data):
             # read data fragment from previously-created message
-            _data = message.binary_data[_cursor:_cursor + MULTIPART_LIMIT]
-            _cursor += MULTIPART_LIMIT
+            _data = message.binary_data[_cursor:_cursor + MULTIPART_LIMIT_SIZE_BYTES]
+            _cursor += MULTIPART_LIMIT_SIZE_BYTES
 
             # create message fragment
             _message_part = Message.from_content(message_id=len(self.outbox) + 1, content=_data)
@@ -165,20 +172,28 @@ class Messenger:
                 _message_part.header.message_id = _previous_message_id = len(self.outbox) + 1
                 self.outbox.append(OutboxItem(_message_part))
 
-        # monotonicity sanity check  # todo: optimize using cached variable
-        for i, outbox_item in enumerate(self.outbox):
-            print(i, outbox_item)
-            assert outbox_item.message.header.message_id == i + 1, (i, outbox_item)
+        # monotonicity sanity check
+        _ = self.clock_self
 
     def create_packet(self, retransmission_timeout: Optional[datetime.timedelta] = None) -> Packet:
         # allow overwriting the retransmission timeout to immediately resend
         if retransmission_timeout is None:
-            retransmission_timeout = self.retransmission_timeout
+            retransmission_timeout = RETRANSMISSION_TIMEOUT
+
+        # control data
+        control = Control(sender_clock_sender=self.clock_self,
+                          sender_clock_recipient=self.clock_other,
+                          sender_clock_out_of_order=self.clock_out_of_order,
+                          recipient_clock_sender=self.other_clock_self,
+                          nack_ids=sorted(self.nack_ids))
+
+        # tracking
+        current_timestamp = get_utc_timestamp()
+        total_size_bytes = PACKET_HEADER_SIZE + control.size_bytes
+        assert total_size_bytes < PACKET_LIMIT_SIZE_BYTES
 
         # get messages to send
-        current_timestamp = get_utc_timestamp()
         messages = []
-        total_size_bytes = 0
         for outbox_item in self.outbox[self.other_clock_self:]:
             # skip if already acked
             if outbox_item.acked:
@@ -188,38 +203,28 @@ class Messenger:
                 if outbox_item.packet_timestamp + retransmission_timeout > current_timestamp:
                     continue
             # skip if too big to append
-            if total_size_bytes + outbox_item.message.size_bytes > self.max_size_bytes:
+            if total_size_bytes + outbox_item.message.size_bytes > PACKET_LIMIT_SIZE_BYTES:
                 continue
             messages.append(outbox_item.message)
-
-        # create packet
-        self._num_sent_packets += 1
-        out = Packet(header=PacketHeader(sender_uuid=self.self_uuid,
-                                         recipient_uuid=self.other_uuid,
-                                         packet_id=self._num_sent_packets,
-                                         num_messages=len(messages)),
-                     messages=messages,
-                     control=Control(sender_clock_sender=self.clock_self,
-                                     sender_clock_recipient=self.clock_other,
-                                     sender_clock_out_of_order=self.clock_out_of_order,
-                                     recipient_clock_sender=self.other_clock_self,
-                                     nack_ids=sorted(set(self.nack_ids))))
 
         # housekeeping of nacks
         for nack_id in self.nack_ids:
             self._sent_nack_ids[nack_id] += 1
         self.nack_ids.clear()
-        to_remove = []
-        for nack_id, times_sent in self._sent_nack_ids.items():
-            if times_sent > self.transmit_nack_how_many_times:
-                to_remove.append(nack_id)
+        for nack_id, times_sent in list(self._sent_nack_ids.items()):
+            if times_sent > NACK_TRANSMIT_COUNT:
+                del self._sent_nack_ids[nack_id]
             else:
-                self.nack_ids.append(nack_id)
-        for nack_id in to_remove:
-            del self._sent_nack_ids[nack_id]
+                self.nack_ids.add(nack_id)
 
-        # return the packet
-        return out
+        # create packet
+        self.num_sent_packets += 1
+        return Packet(header=PacketHeader(sender_uuid=self.self_uuid,
+                                          recipient_uuid=self.other_uuid,
+                                          packet_id=self.num_sent_packets,
+                                          num_messages=len(messages)),
+                      messages=messages,
+                      control=control)
 
     def packet_send(self, packet: Packet):
         # double-check the uuids
@@ -292,17 +297,10 @@ class Messenger:
             self.inbox[message.header.message_id - 1].packet_timestamp = packet.header.packet_timestamp
 
         # link previous messages
-        for message_id, previous_message_id in self._inbox_unlinked_previous_messages.items():
+        for message_id, previous_message_id in list(self._inbox_unlinked_previous_messages.items()):
             if self.inbox[previous_message_id - 1].message is not None:
                 self.inbox[message_id - 1].message.previous_message = self.inbox[previous_message_id - 1].message
                 del self._inbox_unlinked_previous_messages[message_id]
-
-        print(self._inbox_unlinked_previous_messages)
-
-        # monotonicity sanity check  # todo: optimize using cached var
-        for i, inbox_item in enumerate(self.inbox):
-            if inbox_item.message:
-                assert inbox_item.message.header.message_id == i + 1, (i, inbox_item)
 
 
 if __name__ == '__main__':
@@ -326,7 +324,7 @@ if __name__ == '__main__':
     p1_2 = s1.create_packet()
     print(p1_2)
 
-    s2.nack_ids.extend([p1_1.header.packet_id, 999])
+    s2.nack_ids.update([p1_1.header.packet_id, 999])
     p2_0 = s2.create_packet()
     print(p2_0)
     s1.packet_receive(p2_0)
