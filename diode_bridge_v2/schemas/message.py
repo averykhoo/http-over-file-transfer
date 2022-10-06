@@ -37,6 +37,8 @@ class MessageHeader(BaseModel):
     content_type: ContentType  # 2 bytes
     content_hash: constr(regex=rf'[0-9a-f]{{{MESSAGE_DIGEST_SIZE * 2}}}')  # lowercase hash
 
+    # todo: header hash
+
     @property
     def size_bytes(self):
         return MESSAGE_HEADER_SIZE

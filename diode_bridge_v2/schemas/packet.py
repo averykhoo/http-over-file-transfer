@@ -39,6 +39,8 @@ class PacketHeader(BaseModel):
     packet_timestamp: datetime.datetime = Field(default_factory=get_utc_timestamp)
     protocol_version: conint(ge=1, le=MAX_INT_32) = 2
 
+    # todo: encapsulated key for all blake hashes - prevent "surreptitious forwarding"
+
     @property
     def size_bytes(self):
         return PACKET_HEADER_SIZE

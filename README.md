@@ -43,9 +43,16 @@ allow api calls using a file transfer pipe
 * [x] uuid or sequential id?
   * ~~uuid - more state, but easier to implement~~
   * sequential - less state stored (single int64), more bandwidth efficient, lower latency
-* [x] custom binary file format?
+* [ ] sign and encrypt?
   * probably start with json, stuffed into a jwt, and nested into a jwe (sign-then-encrypt)
+  * signing needs to be done separately for each message, and for the packet header and control
+    * to allow partial success for truncated packets
+    * or maybe use hmac instead of hash? blake allows this
   * make sure the sender and recipient are in the signed portion (as well as the filename)?
+  * maybe not yet
+  * or use a streaming encryption wrapper under the gzipfile?
+    * also needs a key encapsulation header
+    * maybe use encapsulated random key for hmac signing?
 * [x] subfolders?
   * server-2-uuid/server-2--server-1--sequence-id.json.jwt.jwe
 * [x] retry partial message success?
@@ -73,24 +80,34 @@ allow api calls using a file transfer pipe
   * meaning we retransmit data multiple times by default, without wating for timeout
   * not necessary (yet)
   * can also optimize the nack retransmit number so they're at least 99% likely to be received
+* [x] splitting up large files?
+  * easier to handle by splitting up messages instead
+* [x] compressing files?
+  * gzip?
+* [x] error correction?
+  * nope not for now, just accept the data loss and retransmit
+* [ ] housekeeping: message processing and removal?
+  * can remove acked messages from outbox
+  * can remove from sent when other lamport clock exceeds it
+  * can remove double-acked from inbox
+  * (extension) use "processing start timestamp" flag to multithread processing of received messages with timeout
+  * (extension) use "processed" flag or clock to determine which messages can be removed
 
 ## how (v2 - reinventing the ~~wheel~~ osi model)
 
 * layer 0 - unreliable file transfer
   * some folder that sometimes pushes files into the other folder
-  * assume the folder is shared among multiple tenants
+  * assume the folder is shared among multiple tenants, so use subfolders with uuid names
+    * also speeds up file listing
   * only ways to organize data are by subfolder and filename
-  * optionally write multiple sub-files or add error correction
-  * compression should be handled here? just write into a gzipfile?
-* layer 1 - reliable secure message log replication
+  * error correction & encryption & completeness check & compression should be handled here
+* layer 1 - reliable secure message log replication (rediscovering tcp from first principles)
   * bounded message size, maybe up to 100mb
-  * signed and encrypted
-  * no partial message retries?
   * maybe send it in a framed format so we can concat multiple short messages using a greedy algorithm
   * base the replication algo on a lamport clock since it's easier to reason about
+  * use keyed hashes with a random key? store the encapsulated key in the packet?
 * layer 2 - http proxy
   * allows http requests to be split into multiple messages if they're too large
-  * compression happens here
   * requires callback url
   * include full schema+creds+url+query+params, headers, timeout?, verb, cookie
 * optional frontend layer - ttl cache
@@ -99,63 +116,7 @@ allow api calls using a file transfer pipe
   * cookies or client id/credentials
   * store and refresh tokens
 
-### server state
-
-* own private key (if using pki)
-* per other server
-  * other public key / shared secret
-  * retransmission timeout
-    * plus additional delay for seconds per megabyte or something?
-  * own lamport clock
-    * own last sent
-    * last contiguous received
-    * out of order received <- property calculated from inbox?
-  * other lamport clock
-    * received
-    * sent
-  * outbox
-    * data to send, id, sent timestamp, acked timestamp
-  * inbox
-    * data received, id, sent timestamp, received timestamp, ack ack timestamp
-* maybe a housekeeping script?
-  * can remove acked messages from outbox
-  * can remove from sent when other lamport clock exceeds it
-  * can remove double-acked from inbox
-  * (extension) use "processing start timestamp" flag to multithread processing of received messages with timeout
-  * (extension) use "processed" flag or clock to determine which messages can be removed
-
-### layer 0
-
-* some folder
-  * recipient
-    * {sender}--{recipient}--{id}.json
-* write as a hidden file with a . prefix then rename/move once done
-* read only when sure the file is fully written - either keep state of timestamp and file size bytes or use mtime/ctime
-  * handle weird / negative time differences between reading and writing?
-  * needs a timeout after last byte is written before we read the file?
-    * or just yolo for reading, ignore/skip errors, and use this timeout only to delete invalid files?
-* maybe add error correction?
-
-### layer 1
-
-* jwe
-  * jwt
-    * metadata (also helps prevent "surreptitious forwarding")
-      * sender uuid - expected to match filename?
-      * recipient uuid
-      * timestamp
-      * protocol version
-    * ordered list of messages (possibly empty)
-      * data
-        * message id - lamport clock tick
-        * content type? (escaped unicode auto handled by json decoder) plaintext / base64-binary / json / compressed?
-        * escaped/base64 data (reject anything above certain size)
-    * control (optional?)
-      * sender's last sent data message sequential id
-      * last contiguous received message id
-      * out of order (non-contiguous) received message ids and associated nonces
-
-### layer 2
+### layer 2 notes
 
 * data (request) (can be compressed?)
   * complete http request details, including files
@@ -172,6 +133,7 @@ allow api calls using a file transfer pipe
 * encrypt, sign
   * [jwcrypto](https://pypi.org/project/jwcrypto/)
   * [python-jose](https://pypi.org/project/python-jose/)
+  * streaming encryption layer
 * reference for http proxy
   * [pproxy](https://pypi.org/project/pproxy/)
 * alternative: use a custom binary format, handle signing and encryption manually
