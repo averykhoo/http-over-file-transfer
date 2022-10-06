@@ -9,16 +9,23 @@ import uuid
 from collections import Counter
 from dataclasses import dataclass
 from dataclasses import field
+from threading import Lock
+from typing import Dict
 from typing import List
 from typing import Optional
 from typing import Union
 from uuid import UUID
 
+from pydantic import BaseModel
+
+from diode_bridge_v2.schemas.message import ContentType
 from diode_bridge_v2.schemas.packet import Control
 from diode_bridge_v2.schemas.packet import Message
 from diode_bridge_v2.schemas.packet import Packet
 from diode_bridge_v2.schemas.packet import PacketHeader
 from diode_bridge_v2.schemas.packet import get_utc_timestamp
+
+MULTIPART_LIMIT = 20  # * 1024 * 1024  # 20MiB
 
 
 @dataclass
@@ -46,7 +53,10 @@ class Messenger:
     transmit_nack_how_many_times: int = field(default=5)
 
     outbox: List[OutboxItem] = field(default_factory=list)  # outbox[i].message.header.message_id == i + 1
+    _outbox_lock = Lock()
+
     inbox: List[InboxItem] = field(default_factory=list)  # inbox[i].message.header.message_id == i + 1
+    _inbox_unlinked_previous_messages: Dict[int, int] = field(default_factory=dict)
 
     _cached_clock_other: int = field(default=0)
     _cached_other_clock_self: int = field(default=0)
@@ -123,10 +133,41 @@ class Messenger:
         assert len(self.other_clock_out_of_order) == 0
         return True
 
-    def append_outbox_data(self, data: Union[str, bytes, dict]):
-        self.outbox.append(OutboxItem(Message.from_content(message_id=len(self.outbox) + 1, content=data)))
+    def append_outbox_data(self, data: Union[str, bytes, dict, BaseModel]):
+        message = Message.from_content(message_id=len(self.outbox) + 1, content=data)
 
+        # single part if size < 10M
+        if len(message.binary_data) <= MULTIPART_LIMIT:
+            with self._outbox_lock:
+                message.header.message_id = len(self.outbox) + 1  # just to be safe, set this again
+                self.outbox.append(OutboxItem(message))
+                return
+
+        _cursor = 0
+        _previous_message_id = 0
+        while _cursor < len(message.binary_data):
+            # read data fragment from previously-created message
+            _data = message.binary_data[_cursor:_cursor + MULTIPART_LIMIT]
+            _cursor += MULTIPART_LIMIT
+
+            # create message fragment
+            _message_part = Message.from_content(message_id=len(self.outbox) + 1, content=_data)
+            _message_part.header.message_prev = _previous_message_id
+
+            # set content type to multipart, or to the actual content type for the final fragment
+            if _cursor < len(message.binary_data):
+                _message_part.header.content_type = ContentType.MULTIPART_FRAGMENT
+            else:
+                _message_part.header.content_type = message.header.content_type
+
+            # add the message
+            with self._outbox_lock:
+                _message_part.header.message_id = _previous_message_id = len(self.outbox) + 1
+                self.outbox.append(OutboxItem(_message_part))
+
+        # monotonicity sanity check  # todo: optimize using cached variable
         for i, outbox_item in enumerate(self.outbox):
+            print(i, outbox_item)
             assert outbox_item.message.header.message_id == i + 1, (i, outbox_item)
 
     def create_packet(self, retransmission_timeout: Optional[datetime.timedelta] = None) -> Packet:
@@ -147,7 +188,7 @@ class Messenger:
                 if outbox_item.packet_timestamp + retransmission_timeout > current_timestamp:
                     continue
             # skip if too big to append
-            if total_size_bytes + len(outbox_item.message.content) > self.max_size_bytes:
+            if total_size_bytes + outbox_item.message.size_bytes > self.max_size_bytes:
                 continue
             messages.append(outbox_item.message)
 
@@ -237,13 +278,28 @@ class Messenger:
                     outbox_item.packet_id = None
                     outbox_item.packet_timestamp = None
 
-        # update received data
+        # add received messages to inbox
         for message in packet.messages:
+            # already received
             if self.inbox[message.header.message_id - 1].message:
                 continue
+
+            # link previous message
+            if message.header.message_prev > 0:
+                self._inbox_unlinked_previous_messages[message.header.message_id] = message.header.message_prev
+
             self.inbox[message.header.message_id - 1].message = message
             self.inbox[message.header.message_id - 1].packet_timestamp = packet.header.packet_timestamp
 
+        # link previous messages
+        for message_id, previous_message_id in self._inbox_unlinked_previous_messages.items():
+            if self.inbox[previous_message_id - 1].message is not None:
+                self.inbox[message_id - 1].message.previous_message = self.inbox[previous_message_id - 1].message
+                del self._inbox_unlinked_previous_messages[message_id]
+
+        print(self._inbox_unlinked_previous_messages)
+
+        # monotonicity sanity check  # todo: optimize using cached var
         for i, inbox_item in enumerate(self.inbox):
             if inbox_item.message:
                 assert inbox_item.message.header.message_id == i + 1, (i, inbox_item)

@@ -79,29 +79,49 @@ class Message(BaseModel):
     previous_message: Optional['Message'] = Field(default=None)
 
     @property
-    def multipart_data(self) -> bytearray:
+    def multipart_binary_data(self) -> Optional[bytearray]:
         if self.header.message_prev:
-            assert self.previous_message is not None
-            out = self.previous_message.multipart_data
+            if self.previous_message is None:
+                out = None
+            else:
+                assert self.previous_message.header.message_id == self.header.message_prev
+                out = self.previous_message.multipart_binary_data
+
         else:
             out = bytearray()
-        out.extend(self.binary_data)
-        return out
+
+        # if we have all previous data, return it with this message's data
+        if out is not None:
+            out.extend(self.binary_data)
+            return out
 
     @property
     def size_bytes(self):
         return self.header.size_bytes + len(self.binary_data)
 
     @property
+    def multipart_size_bytes(self):
+        if not self.header.message_prev:
+            return self.size_bytes
+
+        assert self.previous_message is not None
+        assert self.previous_message.header.message_id == self.header.message_prev
+        return self.size_bytes + self.previous_message.multipart_size_bytes
+
+    @property
     def content(self):
-        if self.header.content_type is ContentType.STRING:
-            return coerce.to_string(self.multipart_data)
-        elif self.header.content_type is ContentType.BINARY:
-            return self.multipart_data
-        elif self.header.content_type is ContentType.JSON_DICT:
-            return json.loads(coerce.to_string(self.multipart_data))
-        elif self.header.content_type is ContentType.MULTIPART_FRAGMENT:
+        _data = self.multipart_binary_data
+        if _data is None:
             return None
+
+        if self.header.content_type is ContentType.STRING:
+            return coerce.to_string(_data)
+        elif self.header.content_type is ContentType.BINARY:
+            return _data
+        elif self.header.content_type is ContentType.JSON_DICT:
+            return json.loads(coerce.to_string(_data))
+        elif self.header.content_type is ContentType.MULTIPART_FRAGMENT:
+            return ...
         else:
             raise NotImplementedError
 

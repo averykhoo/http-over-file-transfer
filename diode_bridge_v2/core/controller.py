@@ -115,8 +115,8 @@ if __name__ == '__main__':
     m2 = Messenger(self_uuid=s2.uuid, other_uuid=s1.uuid)
     s2.messengers[s1.uuid] = m2
 
-    m1.append_outbox_data('test test m1')
-    m2.append_outbox_data('hello from m2')
+    m1.append_outbox_data('test test m1' + '*' * 100)
+    m2.append_outbox_data('hello from m2' + '*' * 200)
     i = 0
 
 
@@ -136,8 +136,8 @@ if __name__ == '__main__':
 
     sync()
 
-    m1.append_outbox_data('test test 2 m1')
-    m2.append_outbox_data('hello from m2 2')
+    m1.append_outbox_data('test test 2 m1' + '!' * 200)
+    m2.append_outbox_data('hello from m2 2' + '!' * 200)
 
     sync()
 
