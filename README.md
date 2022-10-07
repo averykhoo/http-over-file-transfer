@@ -75,11 +75,21 @@ allow api calls using a file transfer pipe
   * maybe ignore fairness for now, just hog the channel
   * consider a model based approach like bbr
     * but since we can get the actual network diagram maybe just optimize it for that?
+  * might be easier to send an ECN flag from the side receiving errors
 * [x] pessimistic retransmits? <- no
   * with enough nack stats we can determine if we should pessimistically assume packet truncation/loss
-  * meaning we retransmit data multiple times by default, without wating for timeout
+    * meaning we retransmit data multiple times by default, without wating for timeout
+    * can also optimize the nack retransmit number so they're at least 99% likely to be received
+    * and optimize the packet size to reduce truncation / maximize goodput
   * not necessary (yet)
-  * can also optimize the nack retransmit number so they're at least 99% likely to be received
+* [ ] how to estimate bandwidth delay product
+  * need to transmit last sent message?
+    * should clock_self be the latest packet in flight?
+    * or should that be a different stat?
+  * also need to guess rtt, meaning either we want synced clocks on both ends or we really take the full rtt
+* [ ] sliding window of transmissions?
+  * congestion window
+  * receive window
 * [x] splitting up large files?
   * easier to handle by splitting up messages instead
 * [x] compressing files?
@@ -90,7 +100,7 @@ allow api calls using a file transfer pipe
   * can remove acked messages from outbox
   * can remove from sent when other lamport clock exceeds it
   * can remove double-acked from inbox
-  * (extension) use "processing start timestamp" flag to multithread processing of received messages with timeout
+  * (extension) use "processing start timestamp" flag to multithread processing of received messages wi`th timeout
   * (extension) use "processed" flag or clock to determine which messages can be removed
 
 ## how (v2 - reinventing the ~~wheel~~ osi model)
@@ -157,3 +167,5 @@ we're currently at step 2 of this process:
   * reed-solomon
   * just append nulls (after a 0xFF end flag) since we only really get truncation errors
 * binary encoding - maybe try base85? slower but more space efficient, and we're probably network limited
+* `uuid7` instead of timestamp + packet sequential id? requires 16 bytes instead of 4 + 4 though
+* see also BBRv2 paper
