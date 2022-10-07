@@ -6,8 +6,9 @@ from typing import BinaryIO
 from typing import Optional
 from typing import Union
 
-_E_SZ = 4  # (encoded size) number of base64 chars per chunk
-_D_SZ = 3  # (decoded size) number of raw bytes per chunk
+# these are constants that need to be changed if you decide to use base85 instead
+_4 = 4  # (encoded size) number of base64 chars per chunk (change to 5)
+_3 = 3  # (decoded size) number of raw bytes per chunk (change to 4)
 
 
 class Base64File(io.BufferedIOBase):
@@ -134,10 +135,10 @@ class Base64File(io.BufferedIOBase):
         self._ensure_not_closed()
         self._ensure_writable()
 
-        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _D_SZ and self._buffer_cursor < _D_SZ
+        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _3 and self._buffer_cursor < _3
 
         # check expected file position
-        _expected_tell = self.file_tell_offset + _E_SZ * ((self._cursor - self._buffer_cursor) // _D_SZ)
+        _expected_tell = self.file_tell_offset + _4 * ((self._cursor - self._buffer_cursor) // _3)
         if _expected_tell != self.file_obj.tell():  # maybe we read ahead a bit
             self._ensure_seekable()
             self.file_obj.seek(_expected_tell)
@@ -151,7 +152,7 @@ class Base64File(io.BufferedIOBase):
         self._cursor += len(data)
         _tmp.clear()
 
-        _num_writable_bytes = _D_SZ * (self._buffer_cursor // _D_SZ)
+        _num_writable_bytes = _3 * (self._buffer_cursor // _3)
         self.file_obj.write(base64.b64encode(self._buffer[:_num_writable_bytes], altchars=self.alt_chars))
 
         self._buffer, _tmp = self._buffer[_num_writable_bytes:], self._buffer
@@ -160,9 +161,9 @@ class Base64File(io.BufferedIOBase):
         self._data_not_written_flag = self._buffer_cursor != 0
 
         # sanity check
-        assert (self._cursor - self._buffer_cursor) % _D_SZ == 0  # we've written a whole number of chunks
-        assert self.file_tell_offset + _E_SZ * ((self._cursor - self._buffer_cursor) // _D_SZ) == self.file_obj.tell()
-        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _D_SZ and self._buffer_cursor < _D_SZ
+        assert (self._cursor - self._buffer_cursor) % _3 == 0  # we've written a whole number of chunks
+        assert self.file_tell_offset + _4 * ((self._cursor - self._buffer_cursor) // _3) == self.file_obj.tell()
+        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _3 and self._buffer_cursor < _3
 
         return len(data)
 
@@ -170,7 +171,7 @@ class Base64File(io.BufferedIOBase):
         self._ensure_not_closed()
         self._ensure_readable()  # cannot read if writing
 
-        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _D_SZ and self._buffer_cursor < _D_SZ
+        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _3 and self._buffer_cursor < _3
 
         # no-op
         if size == 0:
@@ -179,55 +180,55 @@ class Base64File(io.BufferedIOBase):
         # check expected file position
         if self._data_not_written_flag:
             self._ensure_seekable()
-            _expected_write_tell = self.file_tell_offset + _E_SZ * ((self._cursor - self._buffer_cursor) // _D_SZ)
+            _expected_write_tell = self.file_tell_offset + _4 * ((self._cursor - self._buffer_cursor) // _3)
             assert _expected_write_tell == self.file_obj.tell()
-            assert 0 <= self._buffer_cursor < _D_SZ
+            assert 0 <= self._buffer_cursor < _3
             self._ensure_seekable()
 
             # read one chunk of data, appending to existing unwritten bytes
-            if len(self._buffer) < _D_SZ:
+            if len(self._buffer) < _3:
                 _tmp, self._buffer = self._buffer, bytearray()
-                self._buffer.extend(base64.b64decode(self.file_obj.read(_E_SZ), altchars=self.alt_chars, validate=True))
+                self._buffer.extend(base64.b64decode(self.file_obj.read(_4), altchars=self.alt_chars, validate=True))
                 self._buffer[:self._buffer_cursor] = _tmp[:self._buffer_cursor]
 
             # don't write anything (yet)
-            if len(self._buffer) < _D_SZ or (size > 0 and self._buffer_cursor + size < _D_SZ):
+            if len(self._buffer) < _3 or (size > 0 and self._buffer_cursor + size < _3):
                 self.file_obj.seek(_expected_write_tell)  # return file cursor to where we should write from
                 if size < 0:
                     size = len(self._buffer)
                 out = self._buffer[self._buffer_cursor:self._buffer_cursor + size]
                 self._buffer_cursor += len(out)
                 self._cursor += len(out)
-                assert 0 <= self._buffer_cursor <= len(self._buffer) <= _D_SZ and self._buffer_cursor < _D_SZ
+                assert 0 <= self._buffer_cursor <= len(self._buffer) <= _3 and self._buffer_cursor < _3
                 return bytes(out)
 
             # write one chunk of data
-            assert len(self._buffer) == _D_SZ
+            assert len(self._buffer) == _3
             self.file_obj.seek(_expected_write_tell)
-            self.file_obj.write(base64.b64encode(self._buffer[:_D_SZ], altchars=self.alt_chars))
+            self.file_obj.write(base64.b64encode(self._buffer[:_3], altchars=self.alt_chars))
             self._data_not_written_flag = False
 
         # prepare to read data
-        assert len(self._buffer) in {0, _D_SZ}
-        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _D_SZ and self._buffer_cursor < _D_SZ
-        assert (self._cursor - self._buffer_cursor) % _D_SZ == 0
-        _expected_tell = self.file_tell_offset + _E_SZ * (self._cursor // _D_SZ)
+        assert len(self._buffer) in {0, _3}
+        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _3 and self._buffer_cursor < _3
+        assert (self._cursor - self._buffer_cursor) % _3 == 0
+        _expected_tell = self.file_tell_offset + _4 * (self._cursor // _3)
         if len(self._buffer) > 0:
-            _expected_tell += _E_SZ
+            _expected_tell += _4
         assert _expected_tell == self.file_obj.tell(), (_expected_tell, self.file_obj.tell())
 
         # figure out exactly how much to read
         if size > 0:
             _size_to_read = size - (len(self._buffer) - self._buffer_cursor)
-            _file_size_to_read = _E_SZ * (_size_to_read // _D_SZ)
-            if _size_to_read % _D_SZ > 0:
-                _file_size_to_read += _E_SZ
+            _file_size_to_read = _4 * (_size_to_read // _3)
+            if _size_to_read % _3 > 0:
+                _file_size_to_read += _4
         else:
             _file_size_to_read = -1
 
         # read data
         _bytes_read = self.file_obj.read(_file_size_to_read)
-        assert len(_bytes_read) % _E_SZ == 0, (len(_bytes_read), _bytes_read)
+        assert len(_bytes_read) % _4 == 0, (len(_bytes_read), _bytes_read)
         # if _file_size_to_read < 0 or len(_bytes_read) < _file_size_to_read:
         #     _bytes_read += b'===='
         self._buffer.extend(base64.b64decode(_bytes_read, altchars=self.alt_chars, validate=True))
@@ -242,18 +243,18 @@ class Base64File(io.BufferedIOBase):
 
         # clear read buffer
         _tmp, self._buffer = self._buffer, bytearray()
-        _num_bytes_to_clear = _D_SZ * (self._buffer_cursor // _D_SZ)
+        _num_bytes_to_clear = _3 * (self._buffer_cursor // _3)
         self._buffer.extend(_tmp[_num_bytes_to_clear:])
         _tmp.clear()
         self._buffer_cursor -= _num_bytes_to_clear
 
-        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _D_SZ and self._buffer_cursor < _D_SZ
+        assert 0 <= self._buffer_cursor <= len(self._buffer) <= _3 and self._buffer_cursor < _3
         return out
 
     def close(self):
         # ensure data is written
         if self._data_not_written_flag:
-            self.read(_D_SZ)
+            self.read(_3)
 
         # remove the file obj immediately
         file_obj, self.file_obj = self.file_obj, None
@@ -284,7 +285,7 @@ class Base64File(io.BufferedIOBase):
 
         # ensure data is written
         if self._data_not_written_flag:
-            self.read(_D_SZ)
+            self.read(_3)
 
         # write to end of file
         if self._data_not_written_flag:
@@ -293,15 +294,15 @@ class Base64File(io.BufferedIOBase):
         if whence == io.SEEK_SET:
             if offset < 0:
                 raise IOError('unable to seek to negative file size')
-            self._cursor = _D_SZ * (offset // _D_SZ)
-            _offset = _E_SZ * (offset // _D_SZ)
+            self._cursor = _3 * (offset // _3)
+            _offset = _4 * (offset // _3)
 
             self.file_obj.seek(_offset + self.file_tell_offset)
             self._buffer.clear()
             self._buffer_cursor = 0
 
-            if offset % _D_SZ:
-                self.read(offset % _D_SZ)
+            if offset % _3:
+                self.read(offset % _3)
 
         elif whence == io.SEEK_CUR:
             if self._cursor + offset < 0:
@@ -312,8 +313,8 @@ class Base64File(io.BufferedIOBase):
             _tmp = self.file_obj.tell()
             self.file_obj.seek(0, io.SEEK_END)
             _len = (self.file_obj.tell() - self.file_tell_offset)
-            self.file_obj.seek(self.file_tell_offset + _E_SZ * (_len // _E_SZ))
-            self._cursor = _D_SZ * (_len // _E_SZ)
+            self.file_obj.seek(self.file_tell_offset + _4 * (_len // _4))
+            self._cursor = _3 * (_len // _4)
             self.read()
 
         return self._cursor
