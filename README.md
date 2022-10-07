@@ -128,6 +128,11 @@ allow api calls using a file transfer pipe
   * callee's ip or other details?
   * round trip time?
 
+## why?
+
+we're currently at step 2 of this process:
+[![XKCD 2677](https://imgs.xkcd.com/comics/two_key_system.png)](https://xkcd.com/2677/)
+
 ## possible libraries to look into
 
 * encrypt, sign
