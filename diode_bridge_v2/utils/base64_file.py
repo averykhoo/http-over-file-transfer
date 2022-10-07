@@ -18,30 +18,6 @@ class Base64File(io.BufferedIOBase):
     If you need to open a compressed file in text mode, use the gzip.open() function.
     """
 
-    """Mode-checking helper functions."""
-
-    def _ensure_not_closed(self):
-        if self.file_obj is None:
-            raise ValueError("write() on closed GzipFile object")
-        if self.file_obj.closed:
-            raise ValueError('I/O operation on closed file')
-
-    def _ensure_readable(self):
-        if not self.readable():
-            raise io.UnsupportedOperation('File not open for reading')
-        # if self.mode is not 'rb':  # todo
-        #     raise IOError(f'specified mode is {self.mode}, file should not be readable')
-
-    def _ensure_writable(self):
-        if not self.writable():
-            raise io.UnsupportedOperation('File not open for writing')
-        # if self.mode is 'rb':  # todo
-        #     raise IOError('specified mode is "rb", file should not be writable')
-
-    def _ensure_seekable(self):
-        if not self.seekable():
-            raise io.UnsupportedOperation('File does not support seeking')
-
     def __init__(self,
                  file_name: Optional[str] = None,
                  mode: Optional[str] = None,
@@ -126,7 +102,29 @@ class Base64File(io.BufferedIOBase):
     def seekable(self):
         return self.file_obj and self.file_obj.seekable()
 
-    def write(self, data: Union[bytes, bytearray]):
+    def _ensure_not_closed(self):
+        if self.file_obj is None:
+            raise ValueError("write() on closed GzipFile object")
+        if self.file_obj.closed:
+            raise ValueError('I/O operation on closed file')
+
+    def _ensure_readable(self):
+        if not self.readable():
+            raise io.UnsupportedOperation('File not open for reading')
+        # if self.mode is not 'rb':  # todo
+        #     raise IOError(f'specified mode is {self.mode}, file should not be readable')
+
+    def _ensure_writable(self):
+        if not self.writable():
+            raise io.UnsupportedOperation('File not open for writing')
+        # if self.mode is 'rb':  # todo
+        #     raise IOError('specified mode is "rb", file should not be writable')
+
+    def _ensure_seekable(self):
+        if not self.seekable():
+            raise io.UnsupportedOperation('File does not support seeking')
+
+    def write(self, data: Union[bytes, bytearray]) -> int:
         self._ensure_not_closed()
         self._ensure_writable()
 
@@ -162,7 +160,7 @@ class Base64File(io.BufferedIOBase):
 
         return len(data)
 
-    def read(self, size=-1):
+    def read(self, size=-1) -> bytes:
         self._ensure_not_closed()
         self._ensure_readable()  # cannot read if writing
 
@@ -188,13 +186,14 @@ class Base64File(io.BufferedIOBase):
 
             # don't write anything (yet)
             if len(self._buffer) < 3 or (size > 0 and self._buffer_cursor + size < 3):
+                self.file_obj.seek(_expected_write_tell)  # return file cursor to where we should write from
                 if size < 0:
                     size = len(self._buffer)
                 out = self._buffer[self._buffer_cursor:self._buffer_cursor + size]
                 self._buffer_cursor += len(out)
                 self._cursor += len(out)
                 assert 0 <= self._buffer_cursor <= len(self._buffer) <= 3 and self._buffer_cursor < 3
-                return out
+                return bytes(out)
 
             # write one chunk of data
             assert len(self._buffer) == 3
@@ -222,10 +221,9 @@ class Base64File(io.BufferedIOBase):
 
         # read data
         _bytes_read = self.file_obj.read(_file_size_to_read)
-        assert len(_bytes_read) % 4 == 0
+        assert len(_bytes_read) % 4 == 0, (len(_bytes_read), _bytes_read)
         # if _file_size_to_read < 0 or len(_bytes_read) < _file_size_to_read:
         #     _bytes_read += b'===='
-        print(_bytes_read)
         self._buffer.extend(base64.b64decode(_bytes_read, altchars=self.alt_chars, validate=True))
 
         # how much to return
@@ -246,13 +244,8 @@ class Base64File(io.BufferedIOBase):
         assert 0 <= self._buffer_cursor <= len(self._buffer) <= 3 and self._buffer_cursor < 3
         return out
 
-    def peek(self, n):
-        self._ensure_not_closed()
-        self._ensure_readable()
-        raise NotImplementedError
-
     def close(self):
-        # write what remains of the buffer back to disk
+        # ensure data is written
         if self._data_not_written_flag:
             self.read(3)
 
@@ -261,6 +254,7 @@ class Base64File(io.BufferedIOBase):
         if file_obj is None:
             return
 
+        # really make sure
         if self._data_not_written_flag:
             file_obj.write(base64.b64encode(self._buffer, altchars=self.alt_chars))
 
@@ -279,7 +273,15 @@ class Base64File(io.BufferedIOBase):
     def seek(self, offset, whence=io.SEEK_SET):
         self._ensure_not_closed()
         self._ensure_seekable()
-        self._ensure_readable()  # not writable
+        self._ensure_readable()
+
+        # ensure data is written
+        if self._data_not_written_flag:
+            self.read(3)
+
+        # write to end of file
+        if self._data_not_written_flag:
+            self.file_obj.write(base64.b64encode(self._buffer, altchars=self.alt_chars))
 
         if whence == io.SEEK_SET:
             if offset < 0:
@@ -315,13 +317,16 @@ class Base64File(io.BufferedIOBase):
 
 if __name__ == '__main__':
     with open('tmp.txt', 'w+b') as f:
+        print(f.write(b'\1\2'))
+        print(f.write(b'\3'))
         bf = Base64File(file_obj=f, mode='w')
         bf.write(b'01234567890123456789')
-        bf.seek(0)
-        print(bf.read(3))
-        bf.write(b'qwe')
+        bf.seek(1)
+        print(bf.read(1))
+        bf.write(b'qwert')
         bf.close()
     with open('tmp.txt', 'rb') as f:
+        f.seek(3)
         bf = Base64File(file_obj=f, mode='w')
         print(bf.read())
         bf.close()
