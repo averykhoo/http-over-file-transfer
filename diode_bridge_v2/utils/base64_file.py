@@ -177,7 +177,7 @@ class Base64File(io.BufferedIOBase):
             self._ensure_seekable()
             _expected_write_tell = self.file_tell_offset + 4 * ((self._cursor - self._buffer_cursor) // 3)
             assert _expected_write_tell == self.file_obj.tell()
-            assert 0 < self._buffer_cursor < 3
+            assert 0 <= self._buffer_cursor < 3
             self._ensure_seekable()
 
             # read one chunk of data, appending to existing unwritten bytes
@@ -207,9 +207,9 @@ class Base64File(io.BufferedIOBase):
         assert 0 <= self._buffer_cursor <= len(self._buffer) <= 3 and self._buffer_cursor < 3
         assert (self._cursor - self._buffer_cursor) % 3 == 0
         _expected_tell = self.file_tell_offset + 4 * (self._cursor // 3)
-        if self._buffer_cursor > 0:
+        if len(self._buffer) > 0:
             _expected_tell += 4
-        assert _expected_tell == self.file_obj.tell()
+        assert _expected_tell == self.file_obj.tell(), (_expected_tell, self.file_obj.tell())
 
         # figure out exactly how much to read
         if size > 0:
@@ -225,6 +225,7 @@ class Base64File(io.BufferedIOBase):
         assert len(_bytes_read) % 4 == 0
         # if _file_size_to_read < 0 or len(_bytes_read) < _file_size_to_read:
         #     _bytes_read += b'===='
+        print(_bytes_read)
         self._buffer.extend(base64.b64decode(_bytes_read, altchars=self.alt_chars, validate=True))
 
         # how much to return
@@ -251,12 +252,15 @@ class Base64File(io.BufferedIOBase):
         raise NotImplementedError
 
     def close(self):
+        # write what remains of the buffer back to disk
+        if self._data_not_written_flag:
+            self.read(3)
+
         # remove the file obj immediately
         file_obj, self.file_obj = self.file_obj, None
         if file_obj is None:
             return
 
-        # write what remains of the buffer back to disk
         if self._data_not_written_flag:
             file_obj.write(base64.b64encode(self._buffer, altchars=self.alt_chars))
 
@@ -284,7 +288,8 @@ class Base64File(io.BufferedIOBase):
             _offset = 4 * (offset // 3)
 
             self.file_obj.seek(_offset + self.file_tell_offset)
-            self._read_buffer.clear()
+            self._buffer.clear()
+            self._buffer_cursor = 0
 
             if offset % 3:
                 self.read(offset % 3)
@@ -311,7 +316,10 @@ class Base64File(io.BufferedIOBase):
 if __name__ == '__main__':
     with open('tmp.txt', 'w+b') as f:
         bf = Base64File(file_obj=f, mode='w')
-        bf.write(b'asdfgh')
+        bf.write(b'01234567890123456789')
+        bf.seek(0)
+        print(bf.read(3))
+        bf.write(b'qwe')
         bf.close()
     with open('tmp.txt', 'rb') as f:
         bf = Base64File(file_obj=f, mode='w')
