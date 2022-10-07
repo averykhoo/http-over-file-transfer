@@ -2,6 +2,7 @@ import base64
 import builtins
 import io
 import warnings
+from typing import BinaryIO
 from typing import Optional
 from typing import Union
 
@@ -28,14 +29,14 @@ class Base64File(io.BufferedIOBase):
     def _ensure_readable(self):
         if not self.readable():
             raise io.UnsupportedOperation('File not open for reading')
-        if self.mode is not 'rb':
-            raise IOError(f'specified mode is {self.mode}, file should not be readable')
+        # if self.mode is not 'rb':  # todo
+        #     raise IOError(f'specified mode is {self.mode}, file should not be readable')
 
     def _ensure_writable(self):
         if not self.writable():
             raise io.UnsupportedOperation('File not open for writing')
-        if self.mode is 'rb':
-            raise IOError('specified mode is "rb", file should not be writable')
+        # if self.mode is 'rb':  # todo
+        #     raise IOError('specified mode is "rb", file should not be writable')
 
     def _ensure_seekable(self):
         if not self.seekable():
@@ -44,7 +45,7 @@ class Base64File(io.BufferedIOBase):
     def __init__(self,
                  file_name: Optional[str] = None,
                  mode: Optional[str] = None,
-                 file_obj: Optional[io.BytesIO] = None,
+                 file_obj: Optional[Union[io.BytesIO, BinaryIO]] = None,
                  alt_chars: Optional[str] = None,
                  ):
         """
@@ -76,12 +77,12 @@ class Base64File(io.BufferedIOBase):
         # normalize mode to one of {'rb', 'wb', 'ab', 'xb'}
         if mode is None:
             mode = getattr(file_obj, 'mode', 'rb')
-        if mode in {'r', 'rb', 'w', 'wb', 'a', 'ab', 'x', 'xb'}:
-            if 'b' not in mode:
-                mode += 'b'
-                warnings.warn(f'base64_file only supports binary, changing mode to {mode}')
-        else:
-            raise ValueError(f'invalid mode "{mode}"')
+        # if mode in {'r', 'rb', 'w', 'wb', 'a', 'ab', 'x', 'xb'}:  # todo
+        #     if 'b' not in mode:
+        #         mode += 'b'
+        #         warnings.warn(f'base64_file only supports binary, changing mode to {mode}')
+        # else:
+        #     raise ValueError(f'invalid mode "{mode}"')
         self.mode = mode
 
         # create fileobj if needed
@@ -231,14 +232,15 @@ class Base64File(io.BufferedIOBase):
             out = bytes(self._buffer[self._buffer_cursor:self._buffer_cursor + size])
         else:
             out = bytes(self._buffer[self._buffer_cursor:])
+        self._buffer_cursor += len(out)
+        self._cursor += len(out)
 
         # clear read buffer
         _tmp, self._buffer = self._buffer, bytearray()
-        self._buffer.extend(_tmp[3 * (len(self._buffer) // 3):])
+        _num_bytes_to_clear = 3 * (self._buffer_cursor // 3)
+        self._buffer.extend(_tmp[_num_bytes_to_clear:])
         _tmp.clear()
-
-        # update cursor
-        self._cursor += len(out)
+        self._buffer_cursor -= _num_bytes_to_clear
 
         assert 0 <= self._buffer_cursor <= len(self._buffer) <= 3 and self._buffer_cursor < 3
         return out
@@ -304,3 +306,14 @@ class Base64File(io.BufferedIOBase):
 
     def readline(self, size=-1):
         raise NotImplementedError
+
+
+if __name__ == '__main__':
+    with open('tmp.txt', 'w+b') as f:
+        bf = Base64File(file_obj=f, mode='w')
+        bf.write(b'asdfgh')
+        bf.close()
+    with open('tmp.txt', 'rb') as f:
+        bf = Base64File(file_obj=f, mode='w')
+        print(bf.read())
+        bf.close()
