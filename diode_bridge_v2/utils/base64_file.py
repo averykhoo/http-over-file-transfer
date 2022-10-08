@@ -4,6 +4,7 @@ import io
 import warnings
 from typing import BinaryIO
 from typing import Optional
+from typing import TextIO
 from typing import Union
 
 
@@ -18,6 +19,7 @@ class Base64File(io.BufferedIOBase):
     # these are constants that need to be changed if you decide to use base85 instead
     _4 = 4  # (encoded size) number of base64 chars per chunk (change to 5)
     _3 = 3  # (decoded size) number of raw bytes per chunk (change to 4)
+    _binary = 'binary'  # or 'text'
 
     @staticmethod
     def _b64encode(x):
@@ -32,7 +34,7 @@ class Base64File(io.BufferedIOBase):
     def __init__(self,
                  file_name: Optional[str] = None,
                  mode: Optional[str] = None,
-                 file_obj: Optional[Union[io.BytesIO, BinaryIO]] = None,
+                 file_obj: Optional[Union[TextIO, BinaryIO]] = None,
                  alt_chars: Optional[str] = None,
                  ):
         """
@@ -63,7 +65,7 @@ class Base64File(io.BufferedIOBase):
 
         # file object provided
         if file_obj is not None:
-            self._opened_file_obj = None
+            # don't need the file name
             if file_name is not None and file_name != getattr(file_obj, 'name', None):
                 warnings.warn(f'specified file_name "{file_name}" will be ignored, and file_obj will be used as-is')
 
@@ -72,14 +74,22 @@ class Base64File(io.BufferedIOBase):
             if mode is not None and mode != self.mode:
                 warnings.warn(f'specified mode "{mode}" will be ignored, and file_obj will be used as-is')
 
+            # wrap in a text io wrapper if needed
+            if isinstance(file_obj, (BinaryIO, io.BytesIO, io.BufferedIOBase)):
+                file_obj = self._opened_file_obj = io.TextIOWrapper(file_obj)
+            elif isinstance(file_obj, (TextIO, io.StringIO)):
+                self._opened_file_obj = None
+            else:
+                raise TypeError(f'unexpected file_obj type, got {type(file_obj)}')
+
         # file object has to be created from file_name and mode
         else:
             if mode is None:
-                mode = 'rb'
-            if mode and set(mode).issubset({'r', 'w', 'a', 'x', '+', 'b'}):
-                if 'b' not in mode:
-                    mode += 'b'
-                    warnings.warn(f'base64_file only supports binary, changing mode to {mode}')
+                mode = 'r'
+            if mode and set(mode).issubset({'r', 'w', 'a', 'x', '+', self._binary[0]}):
+                if self._binary[0] not in mode:
+                    mode += self._binary[0]
+                    warnings.warn(f'base64_file only supports {self._binary}, changing mode to {mode}')
             else:
                 raise ValueError(f'invalid mode "{mode}"')
             self.mode = mode
@@ -165,7 +175,7 @@ class Base64File(io.BufferedIOBase):
         _tmp.clear()
 
         _num_writable_bytes = self._3 * (self._buffer_cursor // self._3)
-        self.file_obj.write(self._b64encode(self._buffer[:_num_writable_bytes]))
+        self.file_obj.write(self._b64encode(self._buffer[:_num_writable_bytes]).decode('ascii'))
 
         self._buffer, _tmp = self._buffer[_num_writable_bytes:], self._buffer
         self._buffer_cursor -= _num_writable_bytes
@@ -202,7 +212,7 @@ class Base64File(io.BufferedIOBase):
             if len(self._buffer) < self._3:
                 _tmp, self._buffer = self._buffer, bytearray()
                 self._buffer.extend(
-                    self._b64decode(self.file_obj.read(self._4)))
+                    self._b64decode(self.file_obj.read(self._4).encode('ascii')))
                 self._buffer[:self._buffer_cursor] = _tmp[:self._buffer_cursor]
 
             # don't write anything (yet)
@@ -219,7 +229,7 @@ class Base64File(io.BufferedIOBase):
             # write one chunk of data
             assert len(self._buffer) == self._3
             self.file_obj.seek(_expected_write_tell)
-            self.file_obj.write(self._b64encode(self._buffer[:self._3]))
+            self.file_obj.write(self._b64encode(self._buffer[:self._3]).decode('ascii'))
             self._data_not_written_flag = False
 
         # prepare to read data
@@ -241,7 +251,7 @@ class Base64File(io.BufferedIOBase):
             _file_size_to_read = -1
 
         # read data
-        _bytes_read = self.file_obj.read(_file_size_to_read)
+        _bytes_read = self.file_obj.read(_file_size_to_read).encode('ascii')
         assert len(_bytes_read) % self._4 == 0, (len(_bytes_read), _bytes_read)
         # if _file_size_to_read < 0 or len(_bytes_read) < _file_size_to_read:
         #     _bytes_read += b'===='
@@ -277,7 +287,7 @@ class Base64File(io.BufferedIOBase):
 
         # really make sure
         if self._data_not_written_flag:
-            file_obj.write(self._b64encode(self._buffer))
+            file_obj.write(self._b64encode(self._buffer).decode('ascii'))
 
         # close my_file_obj if we opened it via file_name in __init__
         if self._opened_file_obj is not None:
@@ -303,7 +313,7 @@ class Base64File(io.BufferedIOBase):
 
         # write to end of file
         if self._data_not_written_flag:
-            self.file_obj.write(self._b64encode(self._buffer))
+            self.file_obj.write(self._b64encode(self._buffer).decode('ascii'))
 
         if whence == io.SEEK_SET:
             if offset < 0:
@@ -338,9 +348,9 @@ class Base64File(io.BufferedIOBase):
 
 
 if __name__ == '__main__':
-    with open('tmp.txt', 'wb+') as f:
-        print(f.write(b'\1\2'))
-        print(f.write(b'\3'))
+    with open('tmp.txt', 'wt+') as f:
+        print(f.write('\1\2'))
+        print(f.write('\3'))
         bf = Base64File(file_obj=f)
         bf.write(b'01234567890123456789')
         bf.seek(1)
@@ -348,6 +358,7 @@ if __name__ == '__main__':
         bf.write(b'qwert')
         bf.close()
     with open('tmp.txt', 'rb') as f:
+        print(type(f))
         f.seek(3)
         bf = Base64File(file_obj=f)
         print(bf.read())
