@@ -75,9 +75,9 @@ class Base64File(io.BufferedIOBase):
                 warnings.warn(f'specified mode "{mode}" will be ignored, and file_obj will be used as-is')
 
             # wrap in a text io wrapper if needed
-            if isinstance(file_obj, (BinaryIO, io.BytesIO, io.BufferedIOBase)):
-                file_obj = self._opened_file_obj = io.TextIOWrapper(file_obj)
-            elif isinstance(file_obj, (TextIO, io.StringIO)):
+            if isinstance(file_obj, (BinaryIO, io.BytesIO, io.BufferedIOBase, io.RawIOBase)):
+                file_obj = self._opened_file_obj = io.TextIOWrapper(file_obj, encoding='ascii', newline='')
+            elif isinstance(file_obj, (TextIO, io.StringIO, io.TextIOBase)):
                 self._opened_file_obj = None
             else:
                 raise TypeError(f'unexpected file_obj type, got {type(file_obj)}')
