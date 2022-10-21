@@ -65,7 +65,7 @@ class Server:
             messenger = self.messengers[UUID(_sender)]
             # noinspection PyBroadException
             try:
-                packet = Packet.from_file(open_file)
+                packet = Packet.from_file(open_file, secret_key=messenger.secret_key)
                 open_file.close(delete=delete_successful)
 
                 if packet.header.recipient_uuid != self.uuid:
