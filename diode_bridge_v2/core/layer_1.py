@@ -26,9 +26,10 @@ from diode_bridge_v2.schemas.packet import PACKET_HEADER_SIZE
 from diode_bridge_v2.schemas.packet import Packet
 from diode_bridge_v2.schemas.packet import PacketHeader
 from diode_bridge_v2.schemas.packet import get_utc_timestamp
+from diode_bridge_v2.utils.key_encapsulation import generate_secret_key
 
 MULTIPART_LIMIT_SIZE_BYTES = 20  # * 1024 * 1024  # 20 MiB, based on email attachment size because why not
-PACKET_LIMIT_SIZE_BYTES = 200  # * 1024 * 1024  # 200 MiB, below recommended limit of 500MB to avoid truncation
+PACKET_LIMIT_SIZE_BYTES = 400  # * 1024 * 1024  # 400 MiB, below recommended limit of 500MB to avoid truncation
 NACK_TRANSMIT_COUNT = 5  # transmit nack at least this many times
 RETRANSMISSION_TIMEOUT = datetime.timedelta(seconds=5)
 
@@ -305,8 +306,9 @@ class Messenger:
 
 
 if __name__ == '__main__':
-    s1 = Messenger(self_uuid=uuid.uuid4(), other_uuid=uuid.uuid4())
-    s2 = Messenger(self_uuid=s1.other_uuid, other_uuid=s1.self_uuid)
+    s_key = generate_secret_key()
+    s1 = Messenger(self_uuid=uuid.uuid4(), other_uuid=uuid.uuid4(), secret_key=s_key)
+    s2 = Messenger(self_uuid=s1.other_uuid, other_uuid=s1.self_uuid, secret_key=s_key)
 
     p1_0 = s1.create_packet()
     print(p1_0)

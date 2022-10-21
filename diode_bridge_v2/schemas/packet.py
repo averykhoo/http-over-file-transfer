@@ -19,9 +19,10 @@ from diode_bridge_v2.core.layer_0 import BinaryWriter
 from diode_bridge_v2.schemas.message import Message
 from diode_bridge_v2.utils import coerce
 from diode_bridge_v2.utils.key_encapsulation import KEY_LEN
+from diode_bridge_v2.utils.key_encapsulation import TOKEN_LEN
 from diode_bridge_v2.utils.key_encapsulation import decrypt_key
 from diode_bridge_v2.utils.key_encapsulation import encrypt_key
-from diode_bridge_v2.utils.key_encapsulation import generate_key
+from diode_bridge_v2.utils.key_encapsulation import generate_hash_key
 
 # set the max based on signed integers since that's probably sufficient and makes life easier
 MAX_INT_32 = 2 ** 31 - 1  # max 32-bit signed integer == 2_147_483_647
@@ -33,7 +34,7 @@ def get_utc_timestamp():
     return datetime.datetime.utcnow().replace(microsecond=0, tzinfo=datetime.timezone.utc)
 
 
-PACKET_HEADER_SIZE = 16 + 16 + 4 + 4 + 4 + 4 + KEY_LEN + HEADER_DIGEST_SIZE
+PACKET_HEADER_SIZE = 16 + 16 + 4 + 4 + 4 + 4 + TOKEN_LEN + HEADER_DIGEST_SIZE
 
 
 class PacketHeader(BaseModel):
@@ -43,7 +44,7 @@ class PacketHeader(BaseModel):
     num_messages: conint(ge=0, le=MAX_INT_32)
     packet_timestamp: datetime.datetime = Field(default_factory=get_utc_timestamp)
     protocol_version: conint(ge=1, le=MAX_INT_32) = 2
-    hash_key: conbytes(min_length=KEY_LEN, max_length=KEY_LEN) = Field(default_factory=generate_key)
+    hash_key: conbytes(min_length=KEY_LEN, max_length=KEY_LEN) = Field(default_factory=generate_hash_key)
 
     @property
     def size_bytes(self):
@@ -53,9 +54,8 @@ class PacketHeader(BaseModel):
     def filename(self):
         return f'{self.recipient_uuid}/{self.sender_uuid}--{self.recipient_uuid}--{self.packet_id}.packet'
 
-    def to_bytes(self, secret_key) -> bytes:
+    def to_bytes(self, secret_key: bytes) -> bytes:
         encapsulated_key = encrypt_key(self.hash_key, secret_key)
-        assert len(encapsulated_key) == KEY_LEN
 
         out = bytearray()
         out.extend(coerce.from_uuid(self.sender_uuid))  # 16 bytes
@@ -64,7 +64,7 @@ class PacketHeader(BaseModel):
         out.extend(coerce.from_unsigned_integer32(self.num_messages))  # 4 bytes
         out.extend(coerce.from_datetime32(self.packet_timestamp))  # 4 bytes
         out.extend(coerce.from_unsigned_integer32(self.protocol_version))  # 4 bytes
-        out.extend(encapsulated_key)  # 32 bytes
+        out.extend(encapsulated_key)  # 140 bytes
         out.extend(hashlib.blake2b(out, key=self.hash_key, digest_size=HEADER_DIGEST_SIZE).digest())
         assert len(out) == self.size_bytes, (len(out), self.size_bytes)
         return bytes(out)
@@ -76,7 +76,7 @@ class PacketHeader(BaseModel):
             raise ValueError('incorrect length of bytes input')
 
         # get hash key
-        encapsulated_key = binary_data[48:48 + KEY_LEN]
+        encapsulated_key = binary_data[48:48 + TOKEN_LEN]
         hash_key = decrypt_key(encapsulated_key, secret_key)
 
         # validate hash
