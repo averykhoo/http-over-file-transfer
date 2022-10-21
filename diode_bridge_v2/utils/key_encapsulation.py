@@ -12,7 +12,7 @@ def generate_hash_key():
 
 
 def generate_secret_key():
-    return ChaCha20Poly1305.generate_key() + secrets.token_bytes(random.randint(100,200))
+    return ChaCha20Poly1305.generate_key() + secrets.token_bytes(random.randint(100, 200))  # fixme: no random in prod
 
 
 def encrypt_key(hash_key: bytes, secret_key: bytes):
