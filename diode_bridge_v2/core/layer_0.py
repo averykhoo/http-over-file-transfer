@@ -8,6 +8,8 @@ from dataclasses import field
 from pathlib import Path
 from typing import Optional
 
+from base64file.chacha20_file import ChaCha20File
+
 from diode_bridge_v2.utils import coerce
 
 DELAY_ASSUME_WRITE_FINISHED_UNSUCCESSFULLY = datetime.timedelta(seconds=1)
@@ -45,6 +47,7 @@ class BinaryReader:
     def __post_init__(self):
         self.path = Path(self.path)
         self._raw_reader = open(self.path, 'rb')
+        self._chacha20_reader = ChaCha20File(file_obj=self._raw_reader, mode='rb', secret_key=b'\0' * 32)
         self._expected_total_size = coerce.to_unsigned_integer32(self._raw_reader.read(4))
         if self._expected_total_size == 0:
             warnings.warn(f'corrupted packet transmitted: {self.path}')
@@ -80,6 +83,8 @@ class BinaryReader:
     def close(self, *, delete=False):
         if not self._gzip_reader.closed:
             self._gzip_reader.close()
+        if not self._chacha20_reader.closed:
+            self._chacha20_reader.close()
         if not self._raw_reader.closed:
             self._raw_reader.close()
         if delete and self.path.exists():
@@ -100,6 +105,7 @@ class BinaryWriter:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._raw_writer = open(self.path, 'wb')
         self._raw_writer.write(b'\0\0\0\0')
+        self._chacha20_writer = ChaCha20File(file_obj=self._raw_writer, mode='wb', secret_key=b'\0' * 32)
         self._gzip_writer = gzip.GzipFile(mode='wb', fileobj=self._raw_writer)
 
     @property
@@ -111,6 +117,8 @@ class BinaryWriter:
     def close(self):
         if not self._gzip_writer.closed:
             self._gzip_writer.close()
+        if not self._chacha20_writer.closed:
+            self._chacha20_writer.close()
         if not self._raw_writer.closed:
             size = self._raw_writer.tell()
             self._raw_writer.seek(0)

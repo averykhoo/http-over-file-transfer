@@ -44,7 +44,7 @@ class Server:
                 continue
 
             # assume corrupted if less than 4 bytes
-            if path.stat().st_size < 4:
+            if path.stat().st_size < 4 + 16:  # fixme: 16 bytes needed for nonce
                 messenger = self.messengers[UUID(_sender)]
                 messenger.nack_ids.add(_packet_id)
                 continue
