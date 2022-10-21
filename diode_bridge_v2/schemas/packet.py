@@ -18,7 +18,7 @@ from diode_bridge_v2.core.layer_0 import BinaryReader
 from diode_bridge_v2.core.layer_0 import BinaryWriter
 from diode_bridge_v2.schemas.message import Message
 from diode_bridge_v2.utils import coerce
-from diode_bridge_v2.utils.key_encapsulation import KEY_LEN
+from diode_bridge_v2.utils.key_encapsulation import HASH_KEY_LEN
 from diode_bridge_v2.utils.key_encapsulation import TOKEN_LEN
 from diode_bridge_v2.utils.key_encapsulation import decrypt_key
 from diode_bridge_v2.utils.key_encapsulation import encrypt_key
@@ -44,7 +44,7 @@ class PacketHeader(BaseModel):
     num_messages: conint(ge=0, le=MAX_INT_32)
     packet_timestamp: datetime.datetime = Field(default_factory=get_utc_timestamp)
     protocol_version: conint(ge=1, le=MAX_INT_32) = 2
-    hash_key: conbytes(min_length=KEY_LEN, max_length=KEY_LEN) = Field(default_factory=generate_hash_key)
+    hash_key: conbytes(min_length=HASH_KEY_LEN, max_length=HASH_KEY_LEN) = Field(default_factory=generate_hash_key)
 
     @property
     def size_bytes(self):

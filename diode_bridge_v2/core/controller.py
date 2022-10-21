@@ -80,9 +80,10 @@ class Server:
                 if packet.control is None or packet.header.num_messages < len(packet.messages):
                     messenger.nack_ids.add(packet.header.packet_id)
 
-            except Exception:
+            except Exception as e:
                 open_file.close(delete=delete_error_files)
                 messenger.nack_ids.add(_packet_id)
+                warnings.warn(f'{type(e)}: {e}')  # fixme: remove in prod
 
         # prune files
         closed = [path for path, open_file in self._current_files.items() if open_file.closed]
