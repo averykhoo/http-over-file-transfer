@@ -17,6 +17,7 @@ from diode_bridge_v2.utils import coerce
 MAX_INT_32 = 2 ** 31 - 1  # max 32-bit signed integer == 2_147_483_647
 
 MESSAGE_DIGEST_SIZE = 16
+MESSAGE_HEADER_DIGEST_SIZE = 8
 
 
 class ContentType(IntEnum):
@@ -26,7 +27,7 @@ class ContentType(IntEnum):
     MULTIPART_FRAGMENT = 4  # indicates data that requires other data
 
 
-MESSAGE_HEADER_SIZE = 4 + 4 + 4 + 2 + MESSAGE_DIGEST_SIZE
+MESSAGE_HEADER_SIZE = 4 + 4 + 4 + 2 + MESSAGE_DIGEST_SIZE + MESSAGE_HEADER_DIGEST_SIZE
 
 
 class MessageHeader(BaseModel):
@@ -37,13 +38,11 @@ class MessageHeader(BaseModel):
     content_type: ContentType  # 2 bytes
     content_hash: constr(regex=rf'[0-9a-f]{{{MESSAGE_DIGEST_SIZE * 2}}}')  # lowercase hash
 
-    # todo: header hash
-
     @property
     def size_bytes(self):
         return MESSAGE_HEADER_SIZE
 
-    def __bytes__(self) -> bytes:
+    def to_bytes(self, hash_key) -> bytes:
         # typecasting for the type checker
         # noinspection PyTypeChecker
         _content_type_int: int = self.content_type.value
@@ -54,14 +53,23 @@ class MessageHeader(BaseModel):
         out.extend(coerce.from_unsigned_integer32(self.content_length))  # 4 bytes
         out.extend(coerce.from_unsigned_integer16(_content_type_int))  # 2 bytes
         out.extend(coerce.from_hex(self.content_hash))  # MESSAGE_DIGEST_SIZE bytes
+        out.extend(hashlib.blake2b(out, key=hash_key, digest_size=MESSAGE_HEADER_DIGEST_SIZE).digest())
         assert len(out) == self.size_bytes
         return bytes(out)
 
     @classmethod
-    def from_bytes(cls, binary_data):
+    def from_bytes(cls, binary_data, hash_key):
         # validate length
         if len(binary_data) != MESSAGE_HEADER_SIZE:
             raise ValueError('incorrect length of bytes input')
+
+        # validate hash
+        _expected_hash = binary_data[-MESSAGE_HEADER_DIGEST_SIZE:]
+        _actual_hash = hashlib.blake2b(binary_data[:-MESSAGE_HEADER_DIGEST_SIZE],
+                                       key=hash_key,
+                                       digest_size=MESSAGE_HEADER_DIGEST_SIZE).digest()
+        if _actual_hash != _expected_hash:
+            raise ValueError('incorrect hash')
 
         # create message header
         return MessageHeader(message_id=coerce.to_unsigned_integer32(binary_data[0:4]),
@@ -71,8 +79,8 @@ class MessageHeader(BaseModel):
                              content_hash=coerce.to_hex(binary_data[14:14 + MESSAGE_DIGEST_SIZE]))
 
     @classmethod
-    def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
-        return MessageHeader.from_bytes(file_io.read(MESSAGE_HEADER_SIZE))
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader], hash_key):
+        return MessageHeader.from_bytes(file_io.read(MESSAGE_HEADER_SIZE), hash_key)
 
 
 class Message(BaseModel):
@@ -127,23 +135,25 @@ class Message(BaseModel):
         else:
             raise NotImplementedError
 
-    def __bytes__(self):
-        out = bytes(self.header) + self.binary_data
+    def to_bytes(self, hash_key):
+        out = self.header.to_bytes(hash_key) + self.binary_data
         assert len(out) == self.size_bytes
         return out
 
     @classmethod
-    def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
-        _header = MessageHeader.from_file(file_io)
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader], hash_key):
+        _header = MessageHeader.from_file(file_io, hash_key)
         out = Message(header=_header, binary_data=file_io.read(_header.content_length))
-        if hashlib.blake2b(out.binary_data, digest_size=MESSAGE_DIGEST_SIZE).hexdigest() != out.header.content_hash:
+        if hashlib.blake2b(out.binary_data,
+                           digest_size=MESSAGE_DIGEST_SIZE
+                           ).hexdigest() != out.header.content_hash:
             raise ValueError('mismatched hash')
         return out
 
     @classmethod
-    def from_bytes(cls, binary_data: bytes):
+    def from_bytes(cls, binary_data: bytes, hash_key):
         file_io = BytesIO(binary_data)
-        out = Message.from_file(file_io)
+        out = Message.from_file(file_io, hash_key)
         if file_io.read(1):
             raise ValueError('extra unexpected data')
         return out

@@ -1,3 +1,2 @@
 pydantic
 requests
-base64file

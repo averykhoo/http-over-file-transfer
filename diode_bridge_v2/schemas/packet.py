@@ -11,12 +11,17 @@ from uuid import uuid4
 
 from pydantic import BaseModel
 from pydantic import Field
+from pydantic import conbytes
 from pydantic import conint
 
 from diode_bridge_v2.core.layer_0 import BinaryReader
 from diode_bridge_v2.core.layer_0 import BinaryWriter
 from diode_bridge_v2.schemas.message import Message
 from diode_bridge_v2.utils import coerce
+from diode_bridge_v2.utils.key_encapsulation import KEY_LEN
+from diode_bridge_v2.utils.key_encapsulation import decrypt_key
+from diode_bridge_v2.utils.key_encapsulation import encrypt_key
+from diode_bridge_v2.utils.key_encapsulation import generate_key
 
 # set the max based on signed integers since that's probably sufficient and makes life easier
 MAX_INT_32 = 2 ** 31 - 1  # max 32-bit signed integer == 2_147_483_647
@@ -28,7 +33,7 @@ def get_utc_timestamp():
     return datetime.datetime.utcnow().replace(microsecond=0, tzinfo=datetime.timezone.utc)
 
 
-PACKET_HEADER_SIZE = 16 + 16 + 4 + 4 + 4 + 4 + HEADER_DIGEST_SIZE
+PACKET_HEADER_SIZE = 16 + 16 + 4 + 4 + 4 + 4 + KEY_LEN + HEADER_DIGEST_SIZE
 
 
 class PacketHeader(BaseModel):
@@ -38,8 +43,7 @@ class PacketHeader(BaseModel):
     num_messages: conint(ge=0, le=MAX_INT_32)
     packet_timestamp: datetime.datetime = Field(default_factory=get_utc_timestamp)
     protocol_version: conint(ge=1, le=MAX_INT_32) = 2
-
-    # todo: encapsulated key for all blake hashes - prevent "surreptitious forwarding"
+    hash_key: conbytes(min_length=KEY_LEN, max_length=KEY_LEN) = Field(default_factory=generate_key)
 
     @property
     def size_bytes(self):
@@ -49,7 +53,10 @@ class PacketHeader(BaseModel):
     def filename(self):
         return f'{self.recipient_uuid}/{self.sender_uuid}--{self.recipient_uuid}--{self.packet_id}.packet'
 
-    def __bytes__(self) -> bytes:
+    def to_bytes(self, secret_key) -> bytes:
+        encapsulated_key = encrypt_key(self.hash_key, secret_key)
+        assert len(encapsulated_key) == KEY_LEN
+
         out = bytearray()
         out.extend(coerce.from_uuid(self.sender_uuid))  # 16 bytes
         out.extend(coerce.from_uuid(self.recipient_uuid))  # 16 bytes
@@ -57,19 +64,26 @@ class PacketHeader(BaseModel):
         out.extend(coerce.from_unsigned_integer32(self.num_messages))  # 4 bytes
         out.extend(coerce.from_datetime32(self.packet_timestamp))  # 4 bytes
         out.extend(coerce.from_unsigned_integer32(self.protocol_version))  # 4 bytes
-        out.extend(hashlib.blake2b(out, digest_size=HEADER_DIGEST_SIZE).digest())
-        assert len(out) == self.size_bytes
+        out.extend(encapsulated_key)  # 32 bytes
+        out.extend(hashlib.blake2b(out, key=self.hash_key, digest_size=HEADER_DIGEST_SIZE).digest())
+        assert len(out) == self.size_bytes, (len(out), self.size_bytes)
         return bytes(out)
 
     @classmethod
-    def from_bytes(cls, binary_data):
+    def from_bytes(cls, binary_data, secret_key):
         # validate length
         if len(binary_data) != PACKET_HEADER_SIZE:
             raise ValueError('incorrect length of bytes input')
 
+        # get hash key
+        encapsulated_key = binary_data[48:48 + KEY_LEN]
+        hash_key = decrypt_key(encapsulated_key, secret_key)
+
         # validate hash
         _expected_hash = binary_data[-HEADER_DIGEST_SIZE:]
-        _actual_hash = hashlib.blake2b(binary_data[:-HEADER_DIGEST_SIZE], digest_size=HEADER_DIGEST_SIZE).digest()
+        _actual_hash = hashlib.blake2b(binary_data[:-HEADER_DIGEST_SIZE],
+                                       key=hash_key,
+                                       digest_size=HEADER_DIGEST_SIZE).digest()
         if _actual_hash != _expected_hash:
             raise ValueError('incorrect hash')
 
@@ -79,11 +93,12 @@ class PacketHeader(BaseModel):
                             packet_id=coerce.to_unsigned_integer32(binary_data[32:36]),
                             num_messages=coerce.to_unsigned_integer32(binary_data[36:40]),
                             packet_timestamp=coerce.to_datetime32(binary_data[40:44]),
-                            protocol_version=coerce.to_unsigned_integer32(binary_data[44:48]))
+                            protocol_version=coerce.to_unsigned_integer32(binary_data[44:48]),
+                            hash_key=hash_key)
 
     @classmethod
-    def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
-        return PacketHeader.from_bytes(file_io.read(PACKET_HEADER_SIZE))
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader], secret_key):
+        return PacketHeader.from_bytes(file_io.read(PACKET_HEADER_SIZE), secret_key)
 
 
 class Control(BaseModel):
@@ -97,7 +112,7 @@ class Control(BaseModel):
     def size_bytes(self):
         return 4 * (len(self.sender_clock_out_of_order) + len(self.nack_ids) + 5) + HEADER_DIGEST_SIZE
 
-    def __bytes__(self):
+    def to_bytes(self):
         out = bytearray()
         out.extend(coerce.from_unsigned_integer32(self.sender_clock_sender))  # 4 bytes
         out.extend(coerce.from_unsigned_integer32(self.sender_clock_recipient))  # 4 bytes
@@ -165,22 +180,22 @@ class Packet(BaseModel):
     def size_bytes(self):
         return self.header.size_bytes + self.control.size_bytes + sum(msg.size_bytes for msg in self.messages)
 
-    def __bytes__(self):
+    def to_bytes(self, secret_key):
         assert len(self.messages) == self.header.num_messages
         assert self.control is not None
 
         out = bytearray()
-        out.extend(bytes(self.header))
-        out.extend(bytes(self.control))
+        out.extend(self.header.to_bytes(secret_key))
+        out.extend(self.control.to_bytes())
         for _msg in self.messages:
-            out.extend(bytes(_msg))
+            out.extend(_msg.to_bytes(self.header.hash_key))
         assert len(out) == self.size_bytes
         return bytes(out)
 
     @classmethod
-    def from_file(cls, file_io: Union[BytesIO, BinaryReader]):
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader], secret_key):
 
-        out = Packet(header=PacketHeader.from_file(file_io),
+        out = Packet(header=PacketHeader.from_file(file_io, secret_key),
                      control=None,
                      messages=[])
 
@@ -194,7 +209,7 @@ class Packet(BaseModel):
         # noinspection PyBroadException
         try:
             for _i in range(out.header.num_messages):
-                out.messages.append(Message.from_file(file_io))
+                out.messages.append(Message.from_file(file_io, hash_key=out.header.hash_key))
         except Exception:
             warnings.warn(f'unable to parse message, got {len(out.messages)} of {out.header.num_messages}')
             return out
@@ -203,18 +218,18 @@ class Packet(BaseModel):
         return out
 
     @classmethod
-    def from_bytes(cls, binary_data: bytes):
+    def from_bytes(cls, binary_data: bytes, secret_key: bytes):
         file_io = BytesIO(binary_data)
-        out = Packet.from_file(file_io)
+        out = Packet.from_file(file_io, secret_key)
         if file_io.read(1):
             raise ValueError('extra unexpected data')
         return out
 
-    def to_file(self, file_io: Union[BytesIO, BinaryWriter]):
+    def to_file(self, file_io: Union[BytesIO, BinaryWriter], secret_key):
         assert len(self.messages) == self.header.num_messages
         assert self.control is not None
 
-        file_io.write(bytes(self.header))
+        file_io.write(self.header.to_bytes(secret_key))
         file_io.write(bytes(self.control))
         for _msg in self.messages:
             file_io.write(bytes(_msg))
@@ -224,12 +239,14 @@ if __name__ == '__main__':
     from diode_bridge_v2.schemas.message import ContentType
     from diode_bridge_v2.schemas.message import MessageHeader
 
+    key = generate_key()
+
     _ph = PacketHeader(sender_uuid=uuid4(),
                        recipient_uuid=uuid4(),
                        packet_id=random.randint(1, MAX_INT_32),
                        num_messages=random.randint(0, MAX_INT_32))
     print(_ph)
-    assert PacketHeader.from_bytes(bytes(_ph)) == _ph
+    assert PacketHeader.from_bytes(_ph.to_bytes(key), key) == _ph
 
     _mh = MessageHeader(message_id=random.randint(1, MAX_INT_32),
                         message_prev=0,
@@ -237,12 +254,12 @@ if __name__ == '__main__':
                         content_type=ContentType.STRING,
                         content_hash='0123456789abcdef' * 2)
     print(_mh)
-    assert MessageHeader.from_bytes(bytes(_mh)) == _mh
+    assert MessageHeader.from_bytes(_mh.to_bytes(key), key) == _mh
 
     _m = Message.from_content(random.randint(1, MAX_INT_32),
                               content=str(random.randint(10000000000000000000000000, 100000000000000000000000000 - 1)))
     print(_m)
-    assert Message.from_bytes(bytes(_m)) == _m
+    assert Message.from_bytes(_m.to_bytes(key), key) == _m
 
     _p = Packet(header=PacketHeader(sender_uuid=uuid4(),
                                     recipient_uuid=uuid4(),
@@ -256,4 +273,4 @@ if __name__ == '__main__':
                                 ),
                 messages=[_m] * 2)
     print(_p)
-    assert Packet.from_bytes(bytes(_p)) == _p
+    assert Packet.from_bytes(_p.to_bytes(key), key) == _p
