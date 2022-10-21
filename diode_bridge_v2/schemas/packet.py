@@ -230,9 +230,9 @@ class Packet(BaseModel):
         assert self.control is not None
 
         file_io.write(self.header.to_bytes(secret_key))
-        file_io.write(bytes(self.control))
+        file_io.write(self.control.to_bytes())
         for _msg in self.messages:
-            file_io.write(bytes(_msg))
+            file_io.write(_msg.to_bytes(self.header.hash_key))
 
 
 if __name__ == '__main__':

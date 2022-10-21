@@ -53,6 +53,7 @@ class InboxItem:
 class Messenger:
     self_uuid: UUID
     other_uuid: UUID
+    secret_key: bytes
 
     outbox: List[OutboxItem] = field(default_factory=list)  # outbox[i].message.header.message_id == i + 1
     _outbox_lock = Lock()

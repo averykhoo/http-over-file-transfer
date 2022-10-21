@@ -11,6 +11,7 @@ from diode_bridge_v2.core.layer_0 import BinaryReader
 from diode_bridge_v2.core.layer_0 import BinaryWriter
 from diode_bridge_v2.core.layer_1 import Messenger
 from diode_bridge_v2.schemas.packet import Packet
+from diode_bridge_v2.utils.key_encapsulation import generate_key
 
 DELAY_ASSUME_ERROR = datetime.timedelta(seconds=3)
 
@@ -92,7 +93,7 @@ class Server:
         for messenger in self.messengers.values():
             packet = messenger.create_packet()
             f = BinaryWriter(self.output_folder / packet.header.filename)
-            packet.to_file(f)
+            packet.to_file(f, messenger.secret_key)
             f.close()
             messenger.packet_send(packet)
 
@@ -110,9 +111,10 @@ if __name__ == '__main__':
     s2 = Server(uuid=uuid4(), input_folder=Path('test/s2'), output_folder=Path('test/s1'))
 
     # create messengers
-    m1 = Messenger(self_uuid=s1.uuid, other_uuid=s2.uuid)
+    key = generate_key()
+    m1 = Messenger(self_uuid=s1.uuid, other_uuid=s2.uuid, secret_key=key)
     s1.messengers[s2.uuid] = m1
-    m2 = Messenger(self_uuid=s2.uuid, other_uuid=s1.uuid)
+    m2 = Messenger(self_uuid=s2.uuid, other_uuid=s1.uuid, secret_key=key)
     s2.messengers[s1.uuid] = m2
 
     m1.append_outbox_data('test test m1' + '*' * 100)
