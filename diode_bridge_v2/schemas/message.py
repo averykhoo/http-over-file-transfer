@@ -42,7 +42,7 @@ class MessageHeader(BaseModel):
     def size_bytes(self):
         return MESSAGE_HEADER_SIZE
 
-    def to_bytes(self, hash_key) -> bytes:
+    def to_bytes(self, hash_key: bytes) -> bytes:
         # typecasting for the type checker
         # noinspection PyTypeChecker
         _content_type_int: int = self.content_type.value
@@ -58,7 +58,7 @@ class MessageHeader(BaseModel):
         return bytes(out)
 
     @classmethod
-    def from_bytes(cls, binary_data, hash_key):
+    def from_bytes(cls, binary_data:bytes, hash_key:bytes):
         # validate length
         if len(binary_data) != MESSAGE_HEADER_SIZE:
             raise ValueError('incorrect length of bytes input')
@@ -79,7 +79,7 @@ class MessageHeader(BaseModel):
                              content_hash=coerce.to_hex(binary_data[14:14 + MESSAGE_DIGEST_SIZE]))
 
     @classmethod
-    def from_file(cls, file_io: Union[BytesIO, BinaryReader], hash_key):
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader], hash_key: bytes):
         return MessageHeader.from_bytes(file_io.read(MESSAGE_HEADER_SIZE), hash_key)
 
 
@@ -135,13 +135,13 @@ class Message(BaseModel):
         else:
             raise NotImplementedError
 
-    def to_bytes(self, hash_key):
+    def to_bytes(self, hash_key: bytes):
         out = self.header.to_bytes(hash_key) + self.binary_data
         assert len(out) == self.size_bytes
         return out
 
     @classmethod
-    def from_file(cls, file_io: Union[BytesIO, BinaryReader], hash_key):
+    def from_file(cls, file_io: Union[BytesIO, BinaryReader], hash_key:bytes):
         _header = MessageHeader.from_file(file_io, hash_key)
         out = Message(header=_header, binary_data=file_io.read(_header.content_length))
         if hashlib.blake2b(out.binary_data,
@@ -151,7 +151,7 @@ class Message(BaseModel):
         return out
 
     @classmethod
-    def from_bytes(cls, binary_data: bytes, hash_key):
+    def from_bytes(cls, binary_data: bytes, hash_key: bytes):
         file_io = BytesIO(binary_data)
         out = Message.from_file(file_io, hash_key)
         if file_io.read(1):
