@@ -1,4 +1,3 @@
-import random
 import secrets
 
 from cryptography.hazmat.primitives.ciphers.aead import ChaCha20Poly1305
@@ -7,15 +6,17 @@ HASH_KEY_LEN: int = 16
 TOKEN_LEN = 44  # len(encrypt_key(generate_key_bytes(), generate_key_fernet()))
 
 
-def generate_hash_key():
+def generate_hash_key() -> bytes:
     return secrets.token_bytes(HASH_KEY_LEN)
 
 
-def generate_secret_key():
-    return ChaCha20Poly1305.generate_key() + secrets.token_bytes(random.randint(100, 200))  # fixme: no random in prod
+def generate_secret_key() -> bytes:
+    return ChaCha20Poly1305.generate_key() + secrets.token_bytes(1000)  # fixme: no additional nonsense in prod
 
 
-def encrypt_key(hash_key: bytes, secret_key: bytes):
+def encrypt_key(hash_key: bytes,
+                secret_key: bytes,
+                ) -> bytes:
     nonce = secrets.token_bytes(12)
     assert len(hash_key) == HASH_KEY_LEN
     out = ChaCha20Poly1305(secret_key[:32]).encrypt(nonce, hash_key, None)
@@ -23,7 +24,9 @@ def encrypt_key(hash_key: bytes, secret_key: bytes):
     return nonce + out
 
 
-def decrypt_key(encapsulated_key: bytes, secret_key: bytes):
+def decrypt_key(encapsulated_key: bytes,
+                secret_key: bytes,
+                ) -> bytes:
     assert len(encapsulated_key) == TOKEN_LEN
     nonce = encapsulated_key[:12]
     out = ChaCha20Poly1305(secret_key[:32]).decrypt(nonce, encapsulated_key[12:], None)

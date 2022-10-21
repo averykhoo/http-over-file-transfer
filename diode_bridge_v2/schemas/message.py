@@ -39,7 +39,7 @@ class MessageHeader(BaseModel):
     content_hash: constr(regex=rf'[0-9a-f]{{{MESSAGE_DIGEST_SIZE * 2}}}')  # lowercase hash
 
     @property
-    def size_bytes(self):
+    def size_bytes(self) -> int:
         return MESSAGE_HEADER_SIZE
 
     def to_bytes(self, hash_key: bytes) -> bytes:
@@ -58,7 +58,10 @@ class MessageHeader(BaseModel):
         return bytes(out)
 
     @classmethod
-    def from_bytes(cls, binary_data:bytes, hash_key:bytes):
+    def from_bytes(cls,
+                   binary_data: bytes,
+                   hash_key: bytes,
+                   ) -> 'MessageHeader':
         # validate length
         if len(binary_data) != MESSAGE_HEADER_SIZE:
             raise ValueError('incorrect length of bytes input')
@@ -79,7 +82,10 @@ class MessageHeader(BaseModel):
                              content_hash=coerce.to_hex(binary_data[14:14 + MESSAGE_DIGEST_SIZE]))
 
     @classmethod
-    def from_file(cls, file_io: Union[BytesIO, BinaryReader], hash_key: bytes):
+    def from_file(cls,
+                  file_io: Union[BytesIO, BinaryReader],
+                  hash_key: bytes,
+                  ) -> 'MessageHeader':
         return MessageHeader.from_bytes(file_io.read(MESSAGE_HEADER_SIZE), hash_key)
 
 
@@ -106,11 +112,11 @@ class Message(BaseModel):
             return out
 
     @property
-    def size_bytes(self):
+    def size_bytes(self) -> int:
         return self.header.size_bytes + len(self.binary_data)
 
     @property
-    def multipart_size_bytes(self):
+    def multipart_size_bytes(self) -> int:
         if not self.header.message_prev:
             return self.size_bytes
 
@@ -119,7 +125,7 @@ class Message(BaseModel):
         return self.size_bytes + self.previous_message.multipart_size_bytes
 
     @property
-    def content(self):
+    def content(self) -> Optional[bytes]:
         _data = self.multipart_binary_data
         if _data is None:
             return None
@@ -135,13 +141,16 @@ class Message(BaseModel):
         else:
             raise NotImplementedError
 
-    def to_bytes(self, hash_key: bytes):
+    def to_bytes(self, hash_key: bytes) -> bytes:
         out = self.header.to_bytes(hash_key) + self.binary_data
         assert len(out) == self.size_bytes
         return out
 
     @classmethod
-    def from_file(cls, file_io: Union[BytesIO, BinaryReader], hash_key:bytes):
+    def from_file(cls,
+                  file_io: Union[BytesIO, BinaryReader],
+                  hash_key: bytes,
+                  ) -> 'Message':
         _header = MessageHeader.from_file(file_io, hash_key)
         out = Message(header=_header, binary_data=file_io.read(_header.content_length))
         if hashlib.blake2b(out.binary_data,
@@ -151,7 +160,10 @@ class Message(BaseModel):
         return out
 
     @classmethod
-    def from_bytes(cls, binary_data: bytes, hash_key: bytes):
+    def from_bytes(cls,
+                   binary_data: bytes,
+                   hash_key: bytes,
+                   ) -> 'Message':
         file_io = BytesIO(binary_data)
         out = Message.from_file(file_io, hash_key)
         if file_io.read(1):
@@ -159,7 +171,11 @@ class Message(BaseModel):
         return out
 
     @classmethod
-    def from_content(cls, message_id: int, content: Union[str, bytes], previous_message_id: int = 0):
+    def from_content(cls,
+                     message_id: int,
+                     content: Union[str, bytes],
+                     previous_message_id: int = 0,
+                     ) -> 'Message':
         if isinstance(content, str):
             data = coerce.from_string(content)
             content_type = ContentType.STRING
