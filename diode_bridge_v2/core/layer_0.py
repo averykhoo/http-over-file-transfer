@@ -38,6 +38,7 @@ def corrupt_my_file(path: Path,
 @dataclass
 class BinaryReader:
     path: Path
+    # todo: secret_key
     _raw_reader: Optional = field(default=None)
     _gzip_reader: Optional[gzip.GzipFile] = field(default=None)
     _prev_time_monotonic: float = field(default_factory=time.monotonic)
@@ -96,6 +97,7 @@ class BinaryReader:
 
 @dataclass
 class BinaryWriter:
+    # todo: secret_key
     path: Path
     _raw_writer: Optional = field(default=None)
     _gzip_writer: Optional[gzip.GzipFile] = field(default=None)
