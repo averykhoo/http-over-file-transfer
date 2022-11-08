@@ -1,3 +1,4 @@
 pydantic
 requests
 cryptography
+base64file
