@@ -25,6 +25,8 @@ class ContentType(IntEnum):
     BINARY = 2
     JSON_DICT = 3  # not lists or primitives
     MULTIPART_FRAGMENT = 4  # indicates data that requires other data
+    # todo: should url be a special type, or just a json dict?
+    # todo: should tar files be a special type, or just a binary?
 
 
 MESSAGE_HEADER_SIZE = 4 + 4 + 4 + 2 + MESSAGE_DIGEST_SIZE + MESSAGE_HEADER_DIGEST_SIZE
